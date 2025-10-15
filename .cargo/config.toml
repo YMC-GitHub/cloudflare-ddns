@@ -1,0 +1,20 @@
+[profile.release]
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+opt-level = "z"
+incremental = false
+
+[build]
+target = "x86_64-unknown-linux-musl"
+
+# 如果依赖较少，可以移除不必要的特性
+[net]
+git-fetch-with-cli = true
+
+[source.crates-io]
+replace-with = 'ustc'
+
+[source.ustc]
+registry = "git://mirrors.ustc.edu.cn/crates.io-index"
