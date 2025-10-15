@@ -1,6 +1,7 @@
+# 构建阶段
 FROM rust:1.90-alpine3.20 AS builder
 
-# 最简单的方式：直接替换镜像源
+# 镜像源替换
 RUN sed -i 's|dl-cdn.alpinelinux.org|mirrors.ustc.edu.cn|g' /etc/apk/repositories
 
 RUN apk update && apk add --no-cache \
@@ -10,17 +11,48 @@ RUN apk update && apk add --no-cache \
     openssl-dev \
     build-base \
     pkgconfig \
-    openssl-libs-static
-
+    openssl-libs-static \
+    upx \
+    file
 
 WORKDIR /app
-COPY . .
 
+# 先复制 Cargo 配置文件
+COPY .cargo/ .cargo/
+COPY Cargo.toml Cargo.lock ./
+
+# 创建假的 src 目录来缓存依赖
+RUN mkdir -p src && \
+    echo "fn main() {}" > src/main.rs && \
+    echo "// dummy lib" > src/lib.rs
+
+# 构建依赖（缓存层）
 RUN cargo build --release --target x86_64-unknown-linux-musl
 
+# 现在复制真正的源代码
+COPY src/ src/
+
+# 清理假的 main.rs 并重新构建
+RUN rm -f target/x86_64-unknown-linux-musl/release/deps/cloudflare_ddns-* && \
+    cargo build --release --target x86_64-unknown-linux-musl
+
+# 移除调试符号并压缩
+RUN strip /app/target/x86_64-unknown-linux-musl/release/cloudflare-ddns
+RUN upx --best --lzma /app/target/x86_64-unknown-linux-musl/release/cloudflare-ddns
+
+# 查看优化后的大小
+RUN echo "=== 优化后的文件大小 ===" && \
+    ls -lh /app/target/x86_64-unknown-linux-musl/release/cloudflare-ddns && \
+    du -h /app/target/x86_64-unknown-linux-musl/release/cloudflare-ddns  && \
+    echo "=== 检查二进制文件信息 ===" && \
+    file /app/target/x86_64-unknown-linux-musl/release/cloudflare-ddns && \
+    echo "=== 检查是否静态链接 ===" && \
+    ldd /app/target/x86_64-unknown-linux-musl/release/cloudflare-ddns 2>&1 | head -5
+
+# 最终运行阶段
 FROM alpine:3.20
 RUN sed -i 's|dl-cdn.alpinelinux.org|mirrors.ustc.edu.cn|g' /etc/apk/repositories
-RUN apk update && apk add --no-cache ca-certificates
+RUN apk update && apk add --no-cache ca-certificates tzdata
 
 RUN adduser -D -u 1000 appuser
 WORKDIR /app
