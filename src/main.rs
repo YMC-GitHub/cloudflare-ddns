@@ -237,13 +237,14 @@ impl AppConfig {
         // 应用命令行参数（覆盖环境变量和配置文件）
         let cli_args = CliArgs::parse();
         
-        if cli_args.show_platform {
-            println!("Platform: {}", platform.display());
-            println!("OS: {}", platform.os);
-            println!("Architecture: {}", platform.arch);
-            println!("Family: {}", platform.family);
-            std::process::exit(0);
-        }
+        // 移除 show_platform 检查，因为已经在 main 函数中处理了
+        // if cli_args.show_platform {
+        //     println!("Platform: {}", platform.display());
+        //     println!("OS: {}", platform.os);
+        //     println!("Architecture: {}", platform.arch);
+        //     println!("Family: {}", platform.family);
+        //     std::process::exit(0);
+        // }
         
         if let Some(token) = cli_args.cf_api_token {
             app_config.cf_api_token = token;
@@ -589,13 +590,83 @@ async fn run_ddns_update(client: &CloudflareClient, config: &AppConfig) -> Resul
     update_domains(client, config, &current_ip).await
 }
 
+
+fn print_help() {
+    println!("Cloudflare DDNS Client v{}", env!("CARGO_PKG_VERSION"));
+    println!();
+    println!("A cross-platform dynamic DNS updater for Cloudflare");
+    println!();
+    println!("USAGE:");
+    println!("    cloudflare-ddns [OPTIONS]");
+    println!();
+    println!("OPTIONS:");
+    println!("    --cf-api-token <TOKEN>        Cloudflare API token");
+    println!("    --cf-zone-id <ZONE_ID>        Cloudflare zone ID");
+    println!("    --dns-record-name <NAME>      Domain name(s) separated by commas");
+    println!("    --dns-record-type <TYPE>      DNS record type [default: A]");
+    println!("    --proxy                       Enable Cloudflare proxy [default: false]");
+    println!("    --ttl <TTL>                   TTL in seconds [default: 120]");
+    println!("    --network <NETWORK>           Network identifier");
+    println!("    --update-interval <SECONDS>   Update interval in seconds [default: 300]");
+    println!("    --once                        Run once and exit");
+    println!("    --show-platform               Show platform information");
+    println!("    --use-rustls                  Use RustLS instead of native TLS");
+    println!("    --help, -h                    Print help information");
+    println!("    --version, -v                 Print version information");
+    println!();
+    println!("ENVIRONMENT VARIABLES:");
+    println!("    CF_API_TOKEN                  Cloudflare API token");
+    println!("    CF_ZONE_ID                    Cloudflare zone ID");
+    println!("    DNS_RECORD_NAME               Domain name(s) separated by commas");
+    println!("    NETWORK                       Network identifier");
+    println!();
+    println!("EXAMPLES:");
+    println!("    # Using environment variables");
+    println!("    export CF_API_TOKEN=your_token");
+    println!("    export CF_ZONE_ID=your_zone_id");
+    println!("    export DNS_RECORD_NAME=example.com");
+    println!("    cloudflare-ddns");
+    println!();
+    println!("    # Using command line arguments");
+    println!("    cloudflare-ddns --cf-api-token your_token --cf-zone-id your_zone_id --dns-record-name example.com");
+    println!();
+    println!("    # One-time update");
+    println!("    cloudflare-ddns --once --cf-api-token your_token --cf-zone-id your_zone_id --dns-record-name example.com");
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     env_logger::init();
     
     let platform = PlatformInfo::new();
+        
+    // 首先解析命令行参数
+    let cli_args = CliArgs::parse();
+    
+    // 检查帮助和版本参数
+    if cli_args.show_platform {
+        println!("Platform: {}", platform.display());
+        println!("OS: {}", platform.os);
+        println!("Architecture: {}", platform.arch);
+        println!("Family: {}", platform.family);
+        return Ok(());
+    }
+    
+    // 检查是否需要显示帮助信息（通过自定义逻辑）
+    let args: Vec<String> = std::env::args().collect();
+    if args.iter().any(|arg| arg == "--help" || arg == "-h") {
+        print_help();
+        return Ok(());
+    }
+    
+    if args.iter().any(|arg| arg == "--version" || arg == "-v") {
+        println!("cloudflare-ddns v{}", env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
+    
     info!("🚀 Starting Cloudflare DDNS Client on {}", platform.display());
     
+
     // 加载配置
     let config = match AppConfig::new() {
         Ok(config) => config,
@@ -620,7 +691,7 @@ async fn main() -> Result<()> {
         std::process::exit(1);
     }
     
-    let cli_args = CliArgs::parse();
+
     
     // 显示配置信息
     info_step("Configuration", 60, '=');
