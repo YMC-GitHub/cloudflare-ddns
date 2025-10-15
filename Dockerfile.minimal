@@ -1,0 +1,32 @@
+FROM rust:1.90-alpine3.20 AS builder
+
+# 最简单的方式：直接替换镜像源
+RUN sed -i 's|dl-cdn.alpinelinux.org|mirrors.ustc.edu.cn|g' /etc/apk/repositories
+
+RUN apk update && apk add --no-cache \
+    git \
+    gcc \
+    musl-dev \
+    openssl-dev \
+    build-base \
+    pkgconfig \
+    openssl-libs-static
+
+
+WORKDIR /app
+COPY . .
+
+RUN cargo build --release --target x86_64-unknown-linux-musl
+
+FROM alpine:3.20
+RUN sed -i 's|dl-cdn.alpinelinux.org|mirrors.ustc.edu.cn|g' /etc/apk/repositories
+RUN apk update && apk add --no-cache ca-certificates
+
+RUN adduser -D -u 1000 appuser
+WORKDIR /app
+COPY --from=builder /app/target/x86_64-unknown-linux-musl/release/cloudflare-ddns /app/
+
+RUN chown appuser:appuser /app/cloudflare-ddns && chmod +x /app/cloudflare-ddns
+USER appuser
+
+ENTRYPOINT ["/app/cloudflare-ddns"]
