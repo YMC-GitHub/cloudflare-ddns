@@ -1,0 +1,53 @@
+[package]
+name = "cloudflare-ddns"
+version = "0.1.0"
+edition = "2021"
+description = "A cross-platform Cloudflare DDNS client written in Rust"
+authors = ["YeMiancheng <ymc.github@gmail.com>"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/ymc-github/cloudflare-ddns"
+readme = "README.md"
+keywords = ["ddns", "cloudflare", "dns", "dynamic-dns"]
+categories = ["command-line-utilities", "network-programming"]
+
+# 跨平台特性配置
+[package.metadata]
+platforms = ["x86_64-unknown-linux-gnu", "x86_64-pc-windows-msvc", "x86_64-apple-darwin", "aarch64-unknown-linux-gnu", "aarch64-apple-darwin"]
+
+# 针对不同平台的特性
+[features]
+default = ["native-tls"]
+# 使用原生TLS（各平台默认）
+native-tls = ["reqwest/native-tls"]
+# 使用Rust TLS（更小的二进制大小）
+rustls = ["reqwest/rustls-tls"]
+
+# 平台特定特性
+windows = []
+unix = []
+linux = []
+macos = []
+
+[dependencies]
+tokio = { version = "1.0", features = ["full"] }
+reqwest = { version = "0.11", features = ["json"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+config = "0.13"
+anyhow = "1.0"
+log = "0.4"
+env_logger = "0.10"
+chrono = { version = "0.4", features = ["serde"] }
+clap = { version = "4.0", features = ["derive","env"] }
+dotenvy = "0.15"
+
+# 条件编译依赖
+[target.'cfg(windows)'.dependencies]
+winapi = { version = "0.3", features = ["winbase"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+# 开发依赖
+[dev-dependencies]
+tempfile = "3.3"
