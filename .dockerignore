@@ -1,0 +1,11 @@
+# ignore git files
+.git
+
+# ignore docs file
+docs
+
+# ignore rust build files
+target
+
+# ignore dist fiels
+dist
