@@ -204,6 +204,8 @@ fn default_ttl() -> u32 {
 
 impl AppConfig {
     fn new() -> Result<Self> {
+        // config 处理流程: 设默认值 -> 使用环境变量文件变量覆盖(加载环境变量文件 -> 环境变量与配置名字映射 -> 反序列化) -> 使用命令行参数覆盖 (命令行参数解析 -> 手动覆盖)
+        
         let platform = PlatformInfo::new();
         let host_identifier = get_host_identifier().unwrap_or_else(|_| "unknown".to_string());
         
@@ -215,25 +217,105 @@ impl AppConfig {
         cfg = cfg.set_default("ttl", 120)?;
         cfg = cfg.set_default("platform_identifier", host_identifier)?;
 
-        // 从可选的 env 文件加载
+        // 详细的环境变量调试
+        // #[cfg(debug_assertions)]
+        // {
+        //     println!("=== 环境变量检查 ===");
+        //     for (key, value) in std::env::vars() {
+        //         if key.contains("CF") || key.contains("DNS") || key.contains("TOKEN") {
+        //             println!("环境变量 {} = {}", key, value);
+        //         }
+        //     }    
+        // }
+
+
+        // 加载环境变量文件
         if let Ok(env_file) = std::env::var("ENV_FILE") {
+            // println!("尝试加载环境文件: {}", env_file);
             cfg = cfg.add_source(File::with_name(&env_file).required(false));
         } else {
             // 尝试加载 .env 文件
+            // println!("尝试加载 .env 文件");
             let _ = dotenvy::dotenv();
         }
 
-        // 从环境变量加载
+
+
+
+        // println!("=== 环境变量与配置名字映射 ===");
+        // 自动环境变量映射:CF_API_TOKEN -> cf_api_token
+        let env_source = std::env::vars()
+        .map(|(key, value)| {
+            let new_key = match key.as_str() {
+                // "CF_API_TOKEN" => "cf_api_token".to_string(),
+                // "CF_ZONE_ID" => "cf_zone_id".to_string(),
+                // "DNS_RECORD_NAME" => "dns_record_name".to_string(),
+                _ => key.to_lowercase(), // 其他变量转换为小写
+            };
+            (new_key, value)
+        })
+        .collect::<std::collections::HashMap<_, _>>();
         cfg = cfg.add_source(
-            Environment::with_prefix("CF")
-                .prefix_separator("_")
+            Environment::default()
+                .source(Some(env_source))
                 .ignore_empty(true)
                 .try_parsing(true)
         );
 
+        // 自动环境变量映射:CF_API_TOKEN → 移除前缀 CF_ → API_TOKEN → 转换为蛇形命名 → api_token
+        // cfg = cfg.add_source(
+        //     Environment::with_prefix("CF")
+        //         .prefix_separator("_")
+        //         .separator("_")
+        //         .ignore_empty(true)
+        //         .try_parsing(true)
+        //         // 默认转换规则会将 CF_API_TOKEN -> api_token
+        //         // 但我们需要 CF_API_TOKEN -> cf_api_token
+        // );
+
+
+        // println!("=== 手动环境变量映射 ===");
+        // if let Ok(token) = std::env::var("CF_API_TOKEN") {
+        //     println!("手动设置 cf_api_token: {}", token);
+        //     cfg = cfg.set_override("cf_api_token", token)?;
+        // }
+        // if let Ok(zone_id) = std::env::var("CF_ZONE_ID") {
+        //     println!("手动设置 cf_zone_id: {}", zone_id);
+        //     cfg = cfg.set_override("cf_zone_id", zone_id)?;
+        // }
+        // if let Ok(record_name) = std::env::var("DNS_RECORD_NAME") {
+        //     println!("手动设置 dns_record_name: {}", record_name);
+        //     cfg = cfg.set_override("dns_record_name", record_name)?;
+        // }
+
+
         let config = cfg.build()?;
+
+        // #[cfg(debug_assertions)]
+        // {
+        //     println!("=== 配置内容检查 ===");
+        //     // 尝试获取关键配置值来调试
+        //     println!("cf_api_token: {:?}", config.get::<String>("cf_api_token"));
+        //     println!("cf_zone_id: {:?}", config.get::<String>("cf_zone_id"));
+        //     println!("dns_record_name: {:?}", config.get::<String>("dns_record_name"));
+        // }
+
+
+        
+        
+        // 尝试反序列化
+        // println!("=== 尝试反序列化配置 ===");
         let mut app_config: AppConfig = config.try_deserialize()?;
         
+    
+        // #[cfg(debug_assertions)]
+        // {
+        //     println!("=== 反序列化成功 ===");
+        //     println!("cf_api_token: '{}'", app_config.cf_api_token);
+        //     println!("cf_zone_id: '{}'", app_config.cf_zone_id);
+        //     println!("dns_record_name: '{}'", app_config.dns_record_name);
+        // }
+
         // 应用命令行参数（覆盖环境变量和配置文件）
         let cli_args = CliArgs::parse();
         
@@ -721,6 +803,8 @@ async fn main() -> Result<()> {
         info_step("Completed (one-time mode)", 60, '=');
         return Ok(());
     }
+    
+
     
     // 持续运行模式
     let interval = config.update_interval.unwrap_or(300);
