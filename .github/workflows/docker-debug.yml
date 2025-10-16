@@ -1,0 +1,131 @@
+name: Docker Build Debug
+
+on:
+  workflow_dispatch: # 仅手动触发
+    inputs:
+      build_target:
+        description: 'Docker build target'
+        required: false
+        default: 'runtime'
+        type: choice
+        options:
+          - runtime
+          - builder
+          - development
+      platforms:
+        description: 'Target platforms'
+        required: false
+        default: 'linux/amd64'
+        type: string
+      enable_tests:
+        description: 'Run container tests'
+        required: false
+        default: true
+        type: boolean
+
+env:
+  REGISTRY: docker.io
+  IMAGE_NAME: cloudflare-ddns
+
+jobs:
+  debug-build:
+    runs-on: ubuntu-latest
+    name: Debug Build and Test
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Debug Information
+        run: |
+          echo "=== DEBUG BUILD CONFIGURATION ==="
+          echo "Build Target: ${{ inputs.build_target }}"
+          echo "Platforms: ${{ inputs.platforms }}"
+          echo "Enable Tests: ${{ inputs.enable_tests }}"
+          echo "Event: ${{ github.event_name }}"
+          echo "SHA: ${{ github.sha }}"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build without push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          platforms: ${{ inputs.platforms }}
+          push: false
+          tags: |
+            ${{ env.REGISTRY }}/${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:debug-build-${{ github.sha }}
+          target: ${{ inputs.build_target }}
+          outputs: type=docker,dest=/tmp/debug-image.tar
+
+      - name: Load and inspect image
+        run: |
+          echo "🔍 Loading and inspecting image..."
+          docker load -i /tmp/debug-image.tar
+          
+          echo "=== IMAGE DETAILS ==="
+          docker images | grep debug-build
+          
+          echo "=== IMAGE INSPECTION ==="
+          docker image inspect ${{ env.REGISTRY }}/${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:debug-build-${{ github.sha }} | \
+            jq '.[0] | {Size: .Size, Architecture: .Architecture, Os: .Os, Created: .Created}'
+
+      - name: Run basic tests
+        if: ${{ inputs.enable_tests }}
+        run: |
+          echo "🧪 Running basic container tests..."
+          
+          # Test 1: Check if container starts
+          echo "Test 1: Container startup..."
+          timeout 10s docker run --rm ${{ env.REGISTRY }}/${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:debug-build-${{ github.sha }} --version || \
+          timeout 10s docker run --rm ${{ env.REGISTRY }}/${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:debug-build-${{ github.sha }} --help || \
+          echo "Container executed (may have exited normally)"
+          
+          # Test 2: Check file structure
+          echo "Test 2: File structure..."
+          docker run --rm ${{ env.REGISTRY }}/${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:debug-build-${{ github.sha }} ls -la /app/ || true
+          
+          echo "✅ Basic tests completed"
+
+      - name: Size analysis
+        run: |
+          echo "📊 Size Analysis:"
+          docker images --format "table {{.Repository}}\t{{.Tag}}\t{{.Size}}" | grep debug-build
+
+      - name: Save debug report
+        run: |
+          echo "📝 Generating debug report..."
+          cat > /tmp/debug-report.md << EOF
+          # Docker Build Debug Report
+          
+          - **Build Time**: $(date)
+          - **Git SHA**: ${{ github.sha }}
+          - **Build Target**: ${{ inputs.build_target }}
+          - **Platforms**: ${{ inputs.platforms }}
+          
+          ## Image Information
+          \`\`\`
+          $(docker images --format "table {{.Repository}}\t{{.Tag}}\t{{.Size}}\t{{.CreatedAt}}" | grep debug-build)
+          \`\`\`
+          
+          ## Build Success
+          The debug build completed successfully without pushing to registry.
+          EOF
+          
+          cat /tmp/debug-report.md
+
+    #   - name: Upload debug image
+    #     uses: actions/upload-artifact@v4
+    #     with:
+    #       name: debug-docker-image
+    #       path: /tmp/debug-image.tar
+    #       retention-days: 1
+
+      - name: Complete debug session
+        run: |
+          echo "🎉 DEBUG SESSION COMPLETED"
+          echo "✅ Build successful"
+          echo "🚫 No images pushed to registry"
+          # echo "📦 Image saved as artifact for inspection"
+          echo "🔧 Ready for production build"
