@@ -100,3 +100,37 @@ See the main documentation for usage instructions.
 
 MIT OR Apache-2.0
 
+## Demo
+### run-log
+```
+zero:/mnt/d/code/rust/cloudflare-ddns# docker run -d --name cloudflare-ddns --restart unless-stopped --env-file .env $imagename
+137ee5ca3f16a81a048a61ab908454cf59cc615761fa40ccc73b2631d36dfc03
+
+zero:/mnt/d/code/rust/cloudflare-ddns# docker ps -f name=cloudflare-ddns
+CONTAINER ID   IMAGE                     COMMAND                  CREATED          STATUS          PORTS     NAMES
+137ee5ca3f16   cloudflare-ddns:scratch   "/app/cloudflare-ddns"   14 seconds ago   Up 11 seconds             cloudflare-ddns
+
+zero:/mnt/d/code/rust/cloudflare-ddns# docker logs cloudflare-ddns
+=========================Configuration=
+✅ Platform: linux-x86_64
+✅ Zone ID: xxxxxxxxxxxxxxxxxxxxxxxxx
+✅ Record type: A
+✅ Proxy enabled: false
+✅ TTL: 120 seconds
+✅ Host identifier: unknown-unix-host
+✅ Network: cn
+✅ Monitoring 3 domain(s): ["me.xx.top", "hn.xx.top", "ai.xx.top"]
+======================Initial DDNS Update=
+-------------------------get public IP-
+✅ 2025-10-16 07:31:48 - Public IP address xx.xx.xxx.xx
+---------------get DNS record for me.xx.top-
+✅ 2025-10-16 07:31:49 - DNS record me.xx.top found
+✅ 2025-10-16 07:31:49 - IP not changed (xx.xx.xxx.xx) for me.xx.top
+---------------get DNS record for hn.xx.top-
+✅ 2025-10-16 07:31:49 - DNS record hn.xx.top found
+✅ 2025-10-16 07:31:49 - IP not changed (xx.xx.xxx.xx) for hn.xx.top
+---------------get DNS record for ai.xx.top-
+❌ 2025-10-16 07:31:49 - DNS record ai.xx.top not found, attempting to add
+✅ 2025-10-16 07:31:50 - DNS record ai.xx.top added successfully
+==============Starting update loop (300s interval)=
+```
