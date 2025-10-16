@@ -1,7 +1,12 @@
 #!/bin/bash
 
+
 echo "=== 构建优化镜像 ==="
-docker build -f Dockerfile.minimal -t cloudflare-ddns:optimized .
+# docker build -f Dockerfile.minimal -t cloudflare-ddns:optimized .
+docker build --progress=plain -f Dockerfile.minimal -t cloudflare-ddns:optimized .
+# docker build --no-cache -f Dockerfile.minimal -t cloudflare-ddns:optimized .
+
+
 
 echo -e "\n=== 镜像大小 ==="
 docker images cloudflare-ddns:optimized
@@ -43,3 +48,15 @@ docker run --rm cloudflare-ddns:optimized --version
 
 # 测试平台信息
 # docker run --rm cloudflare-ddns:optimized --show-platform
+
+echo -e "\n=== 拷贝二进制文件到宿主机 ==="
+rm ./cloudflare-ddns
+CONTAINER_ID=$(docker create cloudflare-ddns:optimized)
+docker cp $CONTAINER_ID:/app/cloudflare-ddns ./cloudflare-ddns
+docker rm $CONTAINER_ID
+
+echo -e "\n=== 变量挂载检查 ==="
+docker run --rm -e CF_API_TOKEN="your_api_token" -e CF_ZONE_ID="your_zone_id" -e DNS_RECORD_NAME="example.com" --entrypoint="" cloudflare-ddns:optimized env
+# docker run --rm -e CF_API_TOKEN="your_api_token" -e CF_ZONE_ID="your_zone_id" -e DNS_RECORD_NAME="example.com" cloudflare-ddns:optimized
+
+# docker run --rm  --env-file .env --entrypoint="" cloudflare-ddns:optimized env
