@@ -12,7 +12,7 @@ A cross-platform dynamic DNS updater for Cloudflare written in Rust.
 
 ### Using Pre-built Binaries
 
-Download the binary for your platform from the [Releases](https://github.com/ymc-github/cloudflare-ddns/releases) page.
+~~Download the binary for your platform from the [Releases](https://github.com/ymc-github/cloudflare-ddns/releases) page.~~ (todo)
 
 ### From Source
 
@@ -34,7 +34,23 @@ cargo build --release
 # The binary will be at: target/release/cloudflare-ddns
 ```
 #### Cross-compilation
-Using cross (recommended):
+
+Using Docker (recommended):
+```bash
+# docker build --progress=plain -f Dockerfile.minimal -t cloudflare-ddns:optimized .
+./scripts/build-alpine-optimized.sh
+
+# 使用 Alpine 版本
+docker build -f Dockerfile.alpine -t cloudflare-ddns:alpine .
+
+# 使用 Scratch 版本
+docker build -f Dockerfile.scratch -t cloudflare-ddns:scratch .
+
+docker build -f Dockerfile.alpine -t cloudflare-ddns:latest .
+docker build -f Dockerfile.scratch -t cloudflare-ddns:minimal .
+```
+
+~~Using cross (recommended.todo):~~
 ```bash
 # Install cross
 cargo install cross --git https://github.com/cross-rs/cross
@@ -76,11 +92,14 @@ cargo build --release --target x86_64-apple-darwin
 
 ## Binary Sizes
 
-Typical binary sizes (release build):
-- Linux (musl): ~4-5MB
-- Linux (glibc): ~3-4MB  
-- Windows: ~4-5MB
-- macOS: ~4-5MB
+```
+REPOSITORY        TAG         SIZE
+cloudflare-ddns   minimal     3.34MB
+cloudflare-ddns   scratch     3.34MB
+cloudflare-ddns   alpine      16.5MB
+cloudflare-ddns   latest      16.5MB
+cloudflare-ddns   optimized   16.5MB
+```
 
 ## Features
 
@@ -96,12 +115,69 @@ cargo build --release --no-default-features --features rustls
 
 See the main documentation for usage instructions.
 
-## License
+```bash
 
-MIT OR Apache-2.0
+# imagename=cloudflare-ddns:latest
+# imagename=cloudflare-ddns:optimized
+imagename=cloudflare-ddns:alpine
+# imagename=cloudflare-ddns:scratch
+# imagename=cloudflare-ddns:minimal
 
-## Demo
-### run-log
+echo "$imagename"
+
+# docker run --rm --env-file .env cloudflare-ddns:scratch --help
+# docker run --rm --env-file .env cloudflare-ddns:scratch --version
+
+# docker run --rm --env-file .env alpine:3.20 env | grep CF_
+# docker run --rm --env-file .env cloudflare-ddns:alpine | grep CF_
+# docker run --rm --env-file .env cloudflare-ddns:scratch | grep CF_
+
+
+# docker run --rm -e CF_API_TOKEN="your_api_token" -e CF_ZONE_ID="your_zone_id" -e DNS_RECORD_NAME="example.com" --entrypoint="" cloudflare-ddns:optimized env
+
+# docker run --rm -e CF_API_TOKEN="your_api_token" -e CF_ZONE_ID="your_zone_id" -e DNS_RECORD_NAME="example.com" cloudflare-ddns:optimized
+
+
+# 服务状态检测 表格 
+docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" | (read -r header; echo "$header"; sort -hk3 ) | head -n 10
+
+# 检查容器状态
+docker ps -f name=cloudflare-ddns
+
+# 查看容器日志
+docker logs cloudflare-ddns
+
+# 进入容器检查
+docker exec -it cloudflare-ddns /bin/sh
+
+# 检查健康状态
+docker inspect --format='{{.State.Health.Status}}' cloudflare-ddns
+```
+
+### Configuration
+- .env file demo
+```
+# Cloudflare API 配置
+# Replace with your API Token
+CF_API_TOKEN=xxxxxxxxxxxx
+# Replace with your Zone ID
+CF_ZONE_ID=xxxxxxxxxxxxxxx
+
+# DNS 记录配置
+# The name of the record to be updated
+# DNS_RECORD_NAME=me.xx.top
+DNS_RECORD_NAME=me.xx.top,hn.xx.top,ai.xx.top
+# Record type, usually A or AAAA
+DNS_RECORD_TYPE=A
+PROXY=false
+TTL=120
+
+# 应用配置
+UPDATE_INTERVAL=300
+RUN_ON_START=true
+```
+
+### Demo Running log
 ```
 zero:/mnt/d/code/rust/cloudflare-ddns# docker run -d --name cloudflare-ddns --restart unless-stopped --env-file .env $imagename
 137ee5ca3f16a81a048a61ab908454cf59cc615761fa40ccc73b2631d36dfc03
@@ -134,3 +210,7 @@ zero:/mnt/d/code/rust/cloudflare-ddns# docker logs cloudflare-ddns
 ✅ 2025-10-16 07:31:50 - DNS record ai.xx.top added successfully
 ==============Starting update loop (300s interval)=
 ```
+
+## License
+
+MIT OR Apache-2.0
