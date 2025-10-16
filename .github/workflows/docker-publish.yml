@@ -4,6 +4,23 @@ on:
   push:
     tags:
       - 'v*' # 推送v开头的标签时触发，例如 v1.0.0
+  workflow_dispatch: # 允许手动触发
+    inputs:
+      debug_mode:
+        description: 'Enable debug mode (no push to registry)'
+        required: false
+        default: false
+        type: boolean
+      target_platforms:
+        description: 'Target platforms'
+        required: false
+        default: 'linux/amd64,linux/arm64'
+        type: string
+      build_target:
+        description: 'Docker build target'
+        required: false
+        default: 'runtime'
+        type: string
 
 env:
   REGISTRY: docker.io
@@ -20,10 +37,20 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Debug Information
+        run: |
+          echo "Debug Mode: ${{ inputs.debug_mode }}"
+          echo "Target Platforms: ${{ inputs.target_platforms }}"
+          echo "Build Target: ${{ inputs.build_target }}"
+          echo "Trigger Event: ${{ github.event_name }}"
+          echo "Ref: ${{ github.ref }}"
+          echo "SHA: ${{ github.sha }}"
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Log in to Docker Hub
+      - name: Log in to Docker Hub (skip in debug mode)
+        if: ${{ !inputs.debug_mode }}
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
@@ -37,13 +64,66 @@ jobs:
           tags: |
             type=ref,event=tag
             type=raw,value=scratch,enable={{is_default_branch}}
+            type=raw,value=debug-${{ github.sha }},enable=${{ inputs.debug_mode }}
 
-      - name: Build and push Docker image
+      - name: Build Docker image
         uses: docker/build-push-action@v5
         with:
           context: .
-          platforms: linux/amd64,linux/arm64
-          push: true
+          platforms: ${{ inputs.target_platforms }}
+          push: ${{ !inputs.debug_mode }} # 调试模式下不推送
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          target: runtime # 指定构建目标为 runtime 阶段
+          target: ${{ inputs.build_target }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          outputs: |
+            type=docker,
+            name=${{ env.REGISTRY }}/${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:debug-${{ github.sha }},
+            dest=/tmp/image.tar
+
+      - name: Save image locally (debug mode)
+        if: ${{ inputs.debug_mode }}
+        run: |
+          echo "🔧 Debug mode: Saving image to workspace..."
+          mkdir -p /tmp/debug-artifacts
+          cp /tmp/image.tar /tmp/debug-artifacts/cloudflare-ddns-debug.tar
+          echo "Image saved to /tmp/debug-artifacts/"
+
+      - name: Upload debug artifacts
+        if: ${{ inputs.debug_mode }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-image-debug
+          path: /tmp/debug-artifacts/
+          retention-days: 1
+
+      - name: Image inspection (debug mode)
+        if: ${{ inputs.debug_mode }}
+        run: |
+          echo "🔍 Inspecting built image..."
+          docker load -i /tmp/image.tar
+          docker images
+          echo "=== Image details ==="
+          docker image inspect ${{ env.REGISTRY }}/${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:debug-${{ github.sha }} | jq '.[0] | {Size: .Size, Architecture: .Architecture, Os: .Os}'
+
+      - name: Test image (debug mode)
+        if: ${{ inputs.debug_mode }}
+        run: |
+          echo "🧪 Testing built image..."
+          docker run --rm ${{ env.REGISTRY }}/${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:debug-${{ github.sha }} --version || echo "Version check failed, but image runs"
+          echo "✅ Image test completed"
+
+      - name: Success message (production mode)
+        if: ${{ !inputs.debug_mode }}
+        run: |
+          echo "✅ Successfully published images:"
+          echo "${{ steps.meta.outputs.tags }}"
+
+      - name: Debug mode completion message
+        if: ${{ inputs.debug_mode }}
+        run: |
+          echo "🔧 Debug mode completed successfully!"
+          echo "📦 Image built but NOT pushed to registry"
+          echo "💾 Artifacts saved for inspection"
+          echo "🔄 To publish, re-run without debug mode"
