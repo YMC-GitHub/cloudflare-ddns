@@ -10,6 +10,16 @@ readme = "README.md"
 keywords = ["ddns", "cloudflare", "dns", "dynamic-dns"]
 categories = ["command-line-utilities", "network-programming"]
 
+# Add this section if using non-standard paths
+[[bin]]
+name = "cloudflare-ddns"
+path = "src/main.rs"  # or your actual main file path
+
+# Or if it's a library:
+# [lib]
+# name = "cloudflare_ddns"
+# path = "src/lib.rs"
+
 # 跨平台特性配置
 [package.metadata]
 platforms = ["x86_64-unknown-linux-gnu", "x86_64-pc-windows-msvc", "x86_64-apple-darwin", "aarch64-unknown-linux-gnu", "aarch64-apple-darwin"]
