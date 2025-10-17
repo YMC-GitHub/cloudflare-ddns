@@ -31,7 +31,6 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME:  ${{ toLower(github.repository) }}
   BINARY_NAME: ${{ github.event.repository.name }}
 
 jobs:
@@ -45,6 +44,14 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Set up lowercase repository name
+        id: repo
+        run: |
+          # 将仓库名称转换为小写
+          REPO_LOWER=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          echo "repo_lower=$REPO_LOWER" >> $GITHUB_OUTPUT
+          echo "Using repository: $REPO_LOWER"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -60,7 +67,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          images: ${{ env.REGISTRY }}/${{ steps.repo.outputs.repo_lower }}
           tags: |
             type=ref,event=tag
             type=raw,value=scratch,enable=true
@@ -89,8 +96,12 @@ jobs:
           # 创建临时目录
           mkdir -p release-binaries
           
+          # 使用第一个标签来提取二进制文件
+          FIRST_TAG=$(echo "${{ steps.meta.outputs.tags }}" | cut -d',' -f1)
+          echo "Using tag for extraction: $FIRST_TAG"
+          
           # 从刚构建的镜像中提取二进制文件
-          docker create --name extract-binary-container ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.tags }}
+          docker create --name extract-binary-container $FIRST_TAG
           docker cp extract-binary-container:/usr/local/bin/${{ env.BINARY_NAME }} release-binaries/${{ env.BINARY_NAME }}
           docker rm -f extract-binary-container
           
@@ -102,7 +113,9 @@ jobs:
           echo "binary_path=release-binaries/${{ env.BINARY_NAME }}" >> $GITHUB_OUTPUT
           
           # 显示文件信息
+          echo "📄 File information:"
           file release-binaries/${{ env.BINARY_NAME }}
+          echo "📊 File details:"
           ls -la release-binaries/${{ env.BINARY_NAME }}
 
       - name: Upload binary artifact
@@ -116,7 +129,7 @@ jobs:
         run: |
           echo "🎉 Build Completed Successfully"
           echo "==============================="
-          echo "📦 Image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}"
+          echo "📦 Image: ${{ env.REGISTRY }}/${{ steps.repo.outputs.repo_lower }}"
           echo "🏷️  Tags: ${{ steps.meta.outputs.tags }}"
           echo "🏗️  Architecture: x86_64 (amd64)"
           echo "📐 Platform: linux/amd64"
@@ -139,6 +152,13 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - name: Set up lowercase repository name
+        id: repo
+        run: |
+          # 将仓库名称转换为小写
+          REPO_LOWER=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          echo "repo_lower=$REPO_LOWER" >> $GITHUB_OUTPUT
 
       - name: Download binary artifact
         uses: actions/download-artifact@v4
