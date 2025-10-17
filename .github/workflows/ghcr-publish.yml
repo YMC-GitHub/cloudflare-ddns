@@ -1,10 +1,33 @@
-name: Build and Push to GitHub Container Registry
+name: Build and Push Static Binary to GitHub Container Registry
 
 on:
   push:
     tags:
-      - 'v*' # 推送 v 开头的标签时触发，例如 v1.0.0
-  workflow_dispatch: # 允许手动触发工作流
+      - 'v*'  # 推送 v 开头的标签时触发
+  workflow_dispatch:  # 允许手动触发
+    inputs:
+      use_china_mirror:
+        description: 'Use China mirror for faster downloads (for China-based runners)'
+        required: false
+        default: false
+        type: boolean
+      alpine_mirror:
+        description: 'Alpine Linux mirror'
+        required: false
+        default: 'mirrors.aliyun.com'
+        type: choice
+        options:
+          - mirrors.aliyun.com
+          - mirrors.tuna.tsinghua.edu.cn
+          - mirrors.ustc.edu.cn
+      rust_mirror:
+        description: 'Rust Crates mirror'
+        required: false
+        default: 'tuna'
+        type: choice
+        options:
+          - tuna
+          - ustc
 
 env:
   REGISTRY: ghcr.io
@@ -12,7 +35,7 @@ env:
 
 jobs:
   build-and-push:
-    name: Build Docker image and push to GHCR
+    name: Build Static Binary and Push to GHCR
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -40,14 +63,34 @@ jobs:
           tags: |
             type=ref,event=tag
             type=raw,value=scratch,enable=true
-            type=sha,prefix=
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+            type=sha,prefix=git-
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
         with:
           context: .
-          platforms: linux/amd64,linux/arm64
+          platforms: linux/amd64  # 只构建 amd64 平台
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          target: runtime # 确保这里指向你 Dockerfile 中构建 scratch 镜像的阶段
+          target: runtime
+          build-args: |
+            USE_CHINA_MIRROR=${{ inputs.use_china_mirror }}
+            ALPINE_MIRROR=${{ inputs.alpine_mirror }}
+            RUST_MIRROR=${{ inputs.rust_mirror }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build completion report
+        run: |
+          echo "🎉 Build Completed Successfully"
+          echo "==============================="
+          echo "📦 Image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}"
+          echo "🏷️  Tags: ${{ steps.meta.outputs.tags }}"
+          echo "🏗️  Architecture: x86_64 (amd64)"
+          echo "📐 Platform: linux/amd64"
+          echo "🔧 Build Type: Static musl binary on scratch"
+          echo "🌐 China Mirror: ${{ inputs.use_china_mirror }}"
+          echo "📡 Alpine Mirror: ${{ inputs.alpine_mirror }}"
+          echo "⚙️  Rust Mirror: ${{ inputs.rust_mirror }}"
