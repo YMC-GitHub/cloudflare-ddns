@@ -25,7 +25,7 @@ on:
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
-
+  
 env:
   REGISTRY: docker.io
   IMAGE_NAME: ${{ github.event.repository.name }}
@@ -51,8 +51,9 @@ jobs:
             echo "is_main=false" >> $GITHUB_OUTPUT
           fi
           
-          # 设置 debug_mode 标志
-          if [ "${{ inputs.debug_mode }}" = "true" ]; then
+          # 设置 debug_mode 标志，确保总是有值
+          DEBUG_MODE="${{ inputs.debug_mode }}"
+          if [ "$DEBUG_MODE" = "true" ]; then
             echo "debug_mode=true" >> $GITHUB_OUTPUT
           else
             echo "debug_mode=false" >> $GITHUB_OUTPUT
@@ -87,11 +88,6 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}
           tags: |
-            # type=ref,event=tag
-            # type=raw,value=scratch,enable=true
-            # type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
-            # type=raw,value=debug-${{ github.sha }},enable=${{ inputs.debug_mode }}
-
             type=ref,event=tag
             type=raw,value=scratch,enable=${{ steps.flags.outputs.is_main == 'true' }}
             type=raw,value=latest,enable=${{ steps.flags.outputs.is_main == 'true' }}
@@ -108,7 +104,7 @@ jobs:
           target: ${{ inputs.build_target }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          outputs:  ${{ inputs.debug_mode && 'type=docker,dest=/tmp/image.tar' || '' }}
+          outputs: ${{ inputs.debug_mode && 'type=docker,dest=/tmp/image.tar' || '' }}
 
       - name: Save image locally (debug mode)
         if: ${{ inputs.debug_mode }}
@@ -133,14 +129,25 @@ jobs:
           docker load -i /tmp/image.tar
           docker images
           echo "=== Image details ==="
-          docker image inspect ${{ env.REGISTRY }}/${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:debug-${{ github.sha }} | jq '.[0] | {Size: .Size, Architecture: .Architecture, Os: .Os}'
+          IMAGE_TAG="${{ env.REGISTRY }}/${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:debug-${{ github.sha }}"
+          if docker image inspect "$IMAGE_TAG" >/dev/null 2>&1; then
+            docker image inspect "$IMAGE_TAG" | jq '.[0] | {Size: .Size, Architecture: .Architecture, Os: .Os}'
+          else
+            echo "⚠️  Debug image not found for inspection, listing all images:"
+            docker images
+          fi
 
       - name: Test image (debug mode)
         if: ${{ inputs.debug_mode }}
         run: |
           echo "🧪 Testing built image..."
-          docker run --rm ${{ env.REGISTRY }}/${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:debug-${{ github.sha }} --version || echo "Version check failed, but image runs"
-          echo "✅ Image test completed"
+          IMAGE_TAG="${{ env.REGISTRY }}/${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:debug-${{ github.sha }}"
+          if docker image inspect "$IMAGE_TAG" >/dev/null 2>&1; then
+            docker run --rm "$IMAGE_TAG" --version || echo "Version check failed, but image runs"
+            echo "✅ Image test completed"
+          else
+            echo "❌ Debug image not found for testing"
+          fi
 
       - name: Success message (production mode)
         if: ${{ !inputs.debug_mode }}
