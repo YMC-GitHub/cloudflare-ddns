@@ -1,6 +1,6 @@
 [package]
 name = "cloudflare-ddns"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 description = "A cross-platform Cloudflare DDNS client written in Rust"
 authors = ["YeMiancheng <ymc.github@gmail.com>"]
