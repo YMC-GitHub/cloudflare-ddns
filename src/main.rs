@@ -111,7 +111,7 @@ fn get_host_identifier() -> Result<String> {
     return other::get_host_identifier();
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize,Clone)]
 struct AppConfig {
     // 调度配置
     update_interval: Option<u64>,
@@ -569,11 +569,24 @@ fn get_time_now() -> String {
 }
 
 fn info_step(msg: &str, length: usize, fillchar: char) {
-    let msg_len = msg.len();
-    let fill_length = (length - msg_len + 2) / 2;
-    let padding = fillchar.to_string().repeat(fill_length);
-    let padded_msg = format!("{}{}{}{}", padding, fillchar, msg, fillchar);
-    println!("{}", &padded_msg[..length.min(padded_msg.len())]);
+    // let msg_len = msg.len();
+    // let fill_length = (length - msg_len + 2) / 2;
+    // let padding = fillchar.to_string().repeat(fill_length);
+    // let padded_msg = format!("{}{}{}{}", padding, fillchar, msg, fillchar);
+    // println!("{}", &padded_msg[..length.min(padded_msg.len())]);
+
+    let msg_len = msg.chars().count();
+    if msg_len >= length {
+        println!("{}", msg);
+        return;
+    }
+    let padding_len = (length - msg_len) / 2;
+    let padding = fillchar.to_string().repeat(padding_len);
+    
+    // 使用 format! 确保精确的长度控制
+    let formatted = format!("{}{}{}", padding, msg, padding);
+    // 截取到精确长度（因为奇数长度时可能会有1个字符的差异）
+    println!("{}", &formatted[..length.min(formatted.len())]);
 }
 
 fn info_status(msg_body: &str, status: u8) {
@@ -817,5 +830,162 @@ async fn main() -> Result<()> {
         if let Err(e) = run_ddns_update(&client, &config).await {
             error!("❌ Scheduled update failed: {}", e);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_info_step_alignment() {
+        // 测试各种长度的消息
+        info_step("Configuration", 60, '=');
+        info_step("Initial DDNS Update", 60, '=');
+        info_step("get public IP", 60, '-');
+        info_step("get DNS record for example.com", 60, '-');
+        info_step("Starting update loop (300s interval)", 60, '=');
+        
+        // 测试短消息
+        info_step("Test", 20, '*');
+        info_step("A", 10, '-');
+        
+        // 测试长消息（应该直接显示）
+        info_step("This is a very long message that exceeds the specified length", 30, '+');
+    }
+
+    // #[test]
+    // fn test_info_step_output_length() {
+    //     use std::io::{self, Write};
+        
+    //     // 重定向输出到缓冲区来测试实际输出长度
+    //     let mut output = Vec::new();
+    //     {
+    //         let mut guard = io::stdout();
+    //         // 这里需要更复杂的设置来捕获输出，简化测试逻辑
+    //     }
+        
+    //     // 直接测试函数逻辑
+    //     let test_cases = vec![
+    //         ("Test", 10, '-', 10),
+    //         ("Hello", 15, '*', 15),
+    //         ("Config", 20, '=', 20),
+    //     ];
+        
+    //     for (msg, length, fillchar, expected_len) in test_cases {
+    //         let msg_len = msg.chars().count();
+    //         if msg_len >= length {
+    //             // 长消息直接显示
+    //             assert_eq!(msg_len, msg.len());
+    //         } else {
+    //             // 计算预期长度
+    //             let total_padding = length - msg_len;
+    //             let left_padding = total_padding / 2;
+    //             let right_padding = total_padding - left_padding;
+    //             let expected_output_len = left_padding + msg_len + right_padding;
+    //             assert_eq!(expected_output_len, expected_len);
+    //         }
+    //     }
+    // }
+
+    #[test]
+    fn test_platform_info() {
+        let platform = PlatformInfo::new();
+        
+        // 验证平台信息不为空
+        assert!(!platform.os.is_empty());
+        assert!(!platform.arch.is_empty());
+        assert!(!platform.family.is_empty());
+        
+        // 验证显示格式
+        let display = platform.display();
+        assert!(display.contains(&platform.os));
+        assert!(display.contains(&platform.arch));
+    }
+
+    #[test]
+    fn test_get_domain_names() {
+        let config = AppConfig {
+            cf_api_token: "test".to_string(),
+            cf_zone_id: "test".to_string(),
+            dns_record_name: "example.com,www.example.com,api.example.com".to_string(),
+            dns_record_type: "A".to_string(),
+            proxy: false,
+            ttl: 120,
+            network: None,
+            update_interval: Some(300),
+            platform_identifier: "test".to_string(),
+        };
+        
+        let domains = config.get_domain_names();
+        assert_eq!(domains.len(), 3);
+        assert_eq!(domains, vec!["example.com", "www.example.com", "api.example.com"]);
+        
+        // 测试空域名
+        let config_empty = AppConfig {
+            dns_record_name: "".to_string(),
+            ..config
+        };
+        let empty_domains = config_empty.get_domain_names();
+        assert!(empty_domains.is_empty());
+    }
+
+    #[test]
+    fn test_config_validation() {
+        let valid_config = AppConfig {
+            cf_api_token: "token".to_string(),
+            cf_zone_id: "zone".to_string(),
+            dns_record_name: "example.com".to_string(),
+            dns_record_type: "A".to_string(),
+            proxy: false,
+            ttl: 120,
+            network: None,
+            update_interval: None,
+            platform_identifier: "test".to_string(),
+        };
+        
+        assert!(valid_config.validate().is_ok());
+        
+        // 测试无效配置
+        let invalid_configs = vec![
+            AppConfig { cf_api_token: "".to_string(), ..valid_config.clone() }, // 空token
+            AppConfig { cf_zone_id: "".to_string(), ..valid_config.clone() },   // 空zone id
+            AppConfig { dns_record_name: "".to_string(), ..valid_config.clone() }, // 空域名
+            AppConfig { ttl: 0, ..valid_config.clone() }, // TTL太小
+            AppConfig { ttl: 86401, ..valid_config.clone() }, // TTL太大
+        ];
+        
+        for (i, config) in invalid_configs.iter().enumerate() {
+            assert!(config.validate().is_err(), "Test case {} should fail", i);
+        }
+    }
+
+    #[test]
+    fn test_default_values() {
+        assert_eq!(default_record_type(), "A");
+        assert_eq!(default_proxy(), false);
+        assert_eq!(default_ttl(), 120);
+    }
+
+    #[test]
+    fn test_get_time_now() {
+        let time1 = get_time_now();
+        let time2 = get_time_now();
+        
+        // 验证时间格式
+        assert!(time1.len() == 19); // "YYYY-MM-DD HH:MM:SS"
+        assert!(time1.contains('-')); // 包含日期分隔符
+        assert!(time1.contains(':')); // 包含时间分隔符
+        
+        // 两次调用应该得到不同的时间（或者至少格式相同）
+        assert_eq!(time1.len(), time2.len());
+    }
+
+    #[test]
+    fn test_info_status() {
+        // 这个函数主要是输出，我们主要测试它不会panic
+        info_status("Test message", 0);
+        info_status("Error message", 1);
+        info_status("Info message", 2);
     }
 }
