@@ -43,6 +43,10 @@ EOF
 
 ### 3. Run Container
 ```bash
+# docker run --rm yemiancheng/cloudflare-ddns:latest --help
+# docker run --rm yemiancheng/cloudflare-ddns:latest --version
+# docker run --rm yemiancheng/cloudflare-ddns:latest --show-platform
+
 docker run -d \
   --name cloudflare-ddns \
   --restart unless-stopped \
