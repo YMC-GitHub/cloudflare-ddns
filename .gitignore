@@ -1,8 +1,8 @@
 **/target/
 **/.git/
 # **/.github/
-**/Dockerfile*
-**/docker-compose*
+# **/Dockerfile*
+# **/docker-compose*
 **/.env
 **/*.log
 **/tmp/
