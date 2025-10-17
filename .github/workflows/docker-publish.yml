@@ -78,10 +78,7 @@ jobs:
           target: ${{ inputs.build_target }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          outputs: |
-            type=docker,
-            name=${{ env.REGISTRY }}/${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:debug-${{ github.sha }},
-            dest=/tmp/image.tar
+          outputs:  ${{ inputs.debug_mode && 'type=docker,dest=/tmp/image.tar' || '' }}
 
       - name: Save image locally (debug mode)
         if: ${{ inputs.debug_mode }}
