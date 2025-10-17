@@ -14,7 +14,7 @@ on:
       target_platforms:
         description: 'Target platforms'
         required: false
-        default: 'linux/amd64,linux/arm64'
+        default: 'linux/amd64'
         type: string
       build_target:
         description: 'Docker build target'
@@ -64,6 +64,7 @@ jobs:
           tags: |
             type=ref,event=tag
             type=raw,value=scratch,enable={{is_default_branch}}
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
             type=raw,value=debug-${{ github.sha }},enable=${{ inputs.debug_mode }}
 
       - name: Build Docker image
