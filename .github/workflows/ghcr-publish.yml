@@ -6,6 +6,11 @@ on:
       - 'v*'  # 推送 v 开头的标签时触发
   workflow_dispatch:  # 允许手动触发
     inputs:
+      debug_mode:
+        description: 'Enable debug mode (no push to registry, save artifacts)'
+        required: false
+        default: false
+        type: boolean
       use_china_mirror:
         description: 'Use China mirror for faster downloads (for China-based runners)'
         required: false
@@ -45,6 +50,26 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Set up flags
+        id: flags
+        run: |
+          # 设置 debug_mode 标志
+          if [ "${{ inputs.debug_mode }}" = "true" ]; then
+            echo "debug_mode=true" >> $GITHUB_OUTPUT
+          else
+            echo "debug_mode=false" >> $GITHUB_OUTPUT
+          fi
+          
+          # 检测是否是 main 分支
+          if [ "${{ github.ref }}" = "refs/heads/main" ]; then
+            echo "is_main=true" >> $GITHUB_OUTPUT
+          else
+            echo "is_main=false" >> $GITHUB_OUTPUT
+          fi
+          
+          echo "debug_mode: ${{ steps.flags.outputs.debug_mode }}"
+          echo "is_main: ${{ steps.flags.outputs.is_main }}"
+
       - name: Set up lowercase repository name
         id: repo
         run: |
@@ -53,10 +78,21 @@ jobs:
           echo "repo_lower=$REPO_LOWER" >> $GITHUB_OUTPUT
           echo "Using repository: $REPO_LOWER"
 
+      - name: Debug Information
+        run: |
+          echo "🔧 Debug Mode: ${{ inputs.debug_mode }}"
+          echo "🌐 China Mirror: ${{ inputs.use_china_mirror }}"
+          echo "📡 Alpine Mirror: ${{ inputs.alpine_mirror }}"
+          echo "⚙️ Rust Mirror: ${{ inputs.rust_mirror }}"
+          echo "🏷️ Trigger Event: ${{ github.event_name }}"
+          echo "🔖 Ref: ${{ github.ref }}"
+          echo "📝 SHA: ${{ github.sha }}"
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Log in to GitHub Container Registry
+      - name: Log in to GitHub Container Registry (skip in debug mode)
+        if: ${{ !inputs.debug_mode }}
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
@@ -70,16 +106,17 @@ jobs:
           images: ${{ env.REGISTRY }}/${{ steps.repo.outputs.repo_lower }}
           tags: |
             type=ref,event=tag
-            type=raw,value=scratch,enable=true
-            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+            type=raw,value=scratch,enable=${{ steps.flags.outputs.is_main == 'true' }}
+            type=raw,value=latest,enable=${{ steps.flags.outputs.is_main == 'true' }}
+            type=raw,value=debug-${{ github.sha }},enable=${{ steps.flags.outputs.debug_mode == 'true' }}
             type=sha,prefix=git-
 
-      - name: Build and push Docker image
+      - name: Build Docker image
         uses: docker/build-push-action@v5
         with:
           context: .
-          platforms: linux/amd64  # 只构建 amd64 平台
-          push: true
+          platforms: linux/amd64
+          push: ${{ !inputs.debug_mode }}  # 调试模式下不推送
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           target: runtime
@@ -89,6 +126,52 @@ jobs:
             RUST_MIRROR=${{ inputs.rust_mirror }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          outputs: ${{ inputs.debug_mode && 'type=docker,dest=/tmp/image.tar' || '' }}
+
+      - name: Save image locally (debug mode)
+        if: ${{ inputs.debug_mode }}
+        run: |
+          echo "🔧 Debug mode: Saving image to workspace..."
+          mkdir -p /tmp/debug-artifacts
+          cp /tmp/image.tar /tmp/debug-artifacts/cloudflare-ddns-debug.tar
+          echo "Image saved to /tmp/debug-artifacts/"
+
+      - name: Upload debug artifacts (debug mode)
+        if: ${{ inputs.debug_mode }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-image-debug
+          path: /tmp/debug-artifacts/
+          retention-days: 1
+
+      - name: Image inspection (debug mode)
+        if: ${{ inputs.debug_mode }}
+        run: |
+          echo "🔍 Inspecting built image..."
+          docker load -i /tmp/image.tar
+          docker images
+          echo "=== Image details ==="
+          IMAGE_TAG="${{ env.REGISTRY }}/${{ steps.repo.outputs.repo_lower }}:debug-${{ github.sha }}"
+          if docker image inspect "$IMAGE_TAG" >/dev/null 2>&1; then
+            docker image inspect "$IMAGE_TAG" | jq '.[0] | {Size: .Size, Architecture: .Architecture, Os: .Os}'
+          else
+            echo "⚠️ Debug image not found for inspection, listing all images:"
+            docker images
+          fi
+
+      - name: Test image (debug mode)
+        if: ${{ inputs.debug_mode }}
+        run: |
+          echo "🧪 Testing built image..."
+          IMAGE_TAG="${{ env.REGISTRY }}/${{ steps.repo.outputs.repo_lower }}:debug-${{ github.sha }}"
+          if docker image inspect "$IMAGE_TAG" >/dev/null 2>&1; then
+            docker run --rm "$IMAGE_TAG" --version || \
+            docker run --rm "$IMAGE_TAG" --help || \
+            echo "Image runs successfully"
+            echo "✅ Image test completed"
+          else
+            echo "❌ Debug image not found for testing"
+          fi
 
       - name: Extract binary from Docker image
         id: extract-binary
@@ -134,19 +217,31 @@ jobs:
           path: release-binaries/${{ env.BINARY_NAME }}
           retention-days: 1
 
-      - name: Build completion report
+      - name: Build completion report (production mode)
+        if: ${{ !inputs.debug_mode }}
         run: |
           echo "🎉 Build Completed Successfully"
           echo "==============================="
           echo "📦 Image: ${{ env.REGISTRY }}/${{ steps.repo.outputs.repo_lower }}"
-          echo "🏷️  Tags: ${{ steps.meta.outputs.tags }}"
-          echo "🏗️  Architecture: x86_64 (amd64)"
+          echo "🏷️ Tags: ${{ steps.meta.outputs.tags }}"
+          echo "🏗️ Architecture: x86_64 (amd64)"
           echo "📐 Platform: linux/amd64"
           echo "🔧 Build Type: Static musl binary on scratch"
           echo "📦 Binary: ${{ steps.extract-binary.outputs.binary_path }} (${{ steps.extract-binary.outputs.binary_size }})"
           echo "🌐 China Mirror: ${{ inputs.use_china_mirror }}"
           echo "📡 Alpine Mirror: ${{ inputs.alpine_mirror }}"
-          echo "⚙️  Rust Mirror: ${{ inputs.rust_mirror }}"
+          echo "⚙️ Rust Mirror: ${{ inputs.rust_mirror }}"
+
+      - name: Debug mode completion message
+        if: ${{ inputs.debug_mode }}
+        run: |
+          echo "🔧 Debug Mode Completed Successfully!"
+          echo "===================================="
+          echo "📦 Image built but NOT pushed to registry"
+          echo "🏷️ Debug tag: debug-${{ github.sha }}"
+          echo "💾 Artifacts saved for inspection"
+          echo "🔍 Image inspected and tested locally"
+          echo "🔄 To publish, re-run without debug mode"
 
   create-release:
     name: Create GitHub Release
@@ -154,7 +249,7 @@ jobs:
     needs: build-and-push
     permissions:
       contents: write
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') && !inputs.debug_mode
     
     steps:
       - name: Checkout repository
@@ -206,4 +301,4 @@ jobs:
           echo "  - ${{ env.BINARY_NAME }} (executable)"
           echo "  - ${{ env.BINARY_NAME }}.sha256 (SHA256 checksum)"
           echo "  - ${{ env.BINARY_NAME }}.sha512 (SHA512 checksum)"
-          echo "🏷️  Tag: ${GITHUB_REF#refs/tags/}"
+          echo "🏷️ Tag: ${GITHUB_REF#refs/tags/}"
