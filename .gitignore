@@ -1,8 +1,23 @@
-/target
+**/target/
+**/.git/
+**/.github/
+**/Dockerfile*
+**/docker-compose*
+**/.env
+**/*.log
+**/tmp/
+**/.DS_Store
+**/*.tar.gz
+**/*.zip
+
+# 但保留必要的配置
+!.dockerignore
+!Cargo.toml
+!Cargo.lock
+!src/
 
 /dist
 
-.env
 .env.local
 .env.prod
 .env.dev
