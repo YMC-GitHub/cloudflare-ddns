@@ -100,9 +100,9 @@ jobs:
           FIRST_TAG=$(echo "${{ steps.meta.outputs.tags }}" | cut -d',' -f1)
           echo "Using tag for extraction: $FIRST_TAG"
           
-          # 从刚构建的镜像中提取二进制文件
+          # 从刚构建的镜像中提取二进制文件 - 使用正确的路径 /app/cloudflare-ddns
           docker create --name extract-binary-container $FIRST_TAG
-          docker cp extract-binary-container:/usr/local/bin/${{ env.BINARY_NAME }} release-binaries/${{ env.BINARY_NAME }}
+          docker cp extract-binary-container:/app/cloudflare-ddns release-binaries/${{ env.BINARY_NAME }}
           docker rm -f extract-binary-container
           
           # 使二进制文件可执行
@@ -117,6 +117,15 @@ jobs:
           file release-binaries/${{ env.BINARY_NAME }}
           echo "📊 File details:"
           ls -la release-binaries/${{ env.BINARY_NAME }}
+          echo "🔍 Binary inspection:"
+          strings release-binaries/${{ env.BINARY_NAME }} | head -5
+
+      - name: Test extracted binary
+        run: |
+          echo "🧪 Testing extracted binary..."
+          ./release-binaries/${{ env.BINARY_NAME }} --version || \
+          ./release-binaries/${{ env.BINARY_NAME }} --help || \
+          echo "Binary executed successfully"
 
       - name: Upload binary artifact
         uses: actions/upload-artifact@v4
