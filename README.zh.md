@@ -1,18 +1,18 @@
+# Cloudflare DDNS Docker 镜像使用手册
 
-# Cloudflare DDNS Docker Image User Manual
+## 镜像简介
 
-## Image Introduction
+一个轻量级的动态绑定本地公网IP到自定义域名的 Docker 镜像应用。能够自动检测公网 IP 变化并以 Cloudflare DDNS API 创建/更新记录。基于rust实现。
 
-A lightweight Docker image application that dynamically binds local public IP to custom domains. Automatically detects public IP changes and creates/updates records using Cloudflare DDNS API. Implemented in Rust.
+### 可用标签
+- `scratch` (3.49MB) - 基于 `alpine`构建 并部署于 `scratch` 作为运行时镜像
+- ~~`alpine` (16.5MB) - 基于 `alpine`构建 并部署于 `alpine` 作为运行时镜像~~
+- `latest` (3.49.5MB) - 使用 `scratch` 版作为 latest 镜像
 
-### Available Tags
-- `scratch` (3.49MB) - Built on `alpine` and deployed on `scratch` as runtime image
-- ~~`alpine` (16.5MB) - Built on `alpine` and deployed on `alpine` as runtime image~~
-- `latest` (3.49.5MB) - Uses `scratch` version as latest image
 
-## Quick Start
+## 快速开始
 
-### 1. Pull Image
+### 1. 拉取镜像
 ```bash
 # from docker.io
 docker pull yemiancheng/cloudflare-ddns:latest
@@ -21,27 +21,27 @@ docker pull yemiancheng/cloudflare-ddns:latest
 docker pull ghcr.io/ymc-github/cloudflare-ddns:latest
 ```
 
-### 2. Prepare Configuration File
-Create `.env` configuration file:
+### 2. 准备配置文件
+创建 `.env` 配置文件：
 ```bash
 cat > .env << 'EOF'
-# Cloudflare API Configuration
+# Cloudflare API 配置
 CF_API_TOKEN=your_api_token_here
 CF_ZONE_ID=your_zone_id_here
 
-# DNS Record Configuration
+# DNS记录配置
 DNS_RECORD_NAME=example.com,sub.example.com
 DNS_RECORD_TYPE=A
 PROXY=false
 TTL=120
 
-# Application Configuration
+# 应用配置
 UPDATE_INTERVAL=300
 RUN_ON_START=true
 EOF
 ```
 
-### 3. Run Container
+### 3. 运行容器
 ```bash
 docker run -d \
   --name cloudflare-ddns \
@@ -50,7 +50,7 @@ docker run -d \
   yemiancheng/cloudflare-ddns:latest
 ```
 
-#### Runtime Log Example
+#### 运行日志示例
 ```
 [2025-10-17T13:22:19Z INFO  cloudflare_ddns] 🚀 Starting Cloudflare DDNS Client on linux-x86_64
 =======================Configuration=======================
@@ -89,54 +89,55 @@ docker run -d \
 ============Starting update loop (300s interval)============
 ```
 
-## Configuration Guide
 
-### Required Environment Variables
-| Environment Variable | Description | Example |
-|---------------------|-------------|---------|
+## 配置说明
+
+### 必需环境变量
+| 环境变量 | 说明 | 示例 |
+|---------|------|------|
 | `CF_API_TOKEN` | Cloudflare API Token | `yourtoken123` |
 | `CF_ZONE_ID` | Cloudflare Zone ID | `yourzoneid456` |
-| `DNS_RECORD_NAME` | Domain names to update (multiple separated by commas) | `example.com,sub.example.com` |
+| `DNS_RECORD_NAME` | 要更新的域名（多个用逗号分隔） | `example.com,sub.example.com` |
 
-### Optional Environment Variables
-| Environment Variable | Default Value | Description |
-|---------------------|---------------|-------------|
-| `DNS_RECORD_TYPE` | A | DNS record type (A/AAAA) |
-| `PROXY` | false | Enable Cloudflare proxy |
-| `TTL` | 120 | DNS record TTL (seconds) |
-| `UPDATE_INTERVAL` | 300 | IP check interval (seconds) |
-| `RUN_ON_START` | true | Execute update immediately on container start |
+### 可选环境变量
+| 环境变量 | 默认值 | 说明 |
+|---------|--------|------|
+| `DNS_RECORD_TYPE` | A | DNS记录类型（A/AAAA） |
+| `PROXY` | false | 是否启用Cloudflare代理 |
+| `TTL` | 120 | DNS记录TTL（秒） |
+| `UPDATE_INTERVAL` | 300 | IP检查间隔（秒） |
+| `RUN_ON_START` | true | 容器启动时立即执行更新 |
 
-## Container Management Commands
+## 容器管理命令
 
-### Check Running Status
+### 查看运行状态
 ```bash
 docker ps -f name=cloudflare-ddns
 ```
 
-### View Real-time Logs
+### 查看实时日志
 ```bash
 docker logs -f cloudflare-ddns
 ```
 
-### Enter Container
+### 进入容器
 ```bash
 docker exec -it cloudflare-ddns sh
 ```
 
-### Stop and Remove Container
+### 停止并删除容器
 ```bash
 docker stop cloudflare-ddns && docker rm cloudflare-ddns
 ```
 
-### Restart Service
+### 重启服务
 ```bash
 docker restart cloudflare-ddns
 ```
 
-## Using Docker Compose
+## 使用 Docker Compose
 
-### Create docker-compose.yml
+### 创建 docker-compose.yml
 ```yaml
 version: '3.8'
 services:
@@ -147,75 +148,75 @@ services:
     env_file: .env
 ```
 
-### Start Service
+### 启动服务
 ```bash
 docker-compose up -d
 ```
 
-### Check Service Status
+### 查看服务状态
 ```bash
 docker-compose ps
 ```
 
-### Stop Service
+### 停止服务
 ```bash
 docker-compose down
 ```
 
-## Configuration Guide
+## 配置指南
 
-### Obtaining Cloudflare API Token
-1. Log in to Cloudflare dashboard
-2. Go to 「My Profile」→「API Tokens」
-3. Click 「Create Token」
-4. Select 「Edit zone DNS」template
-5. Choose the domain zone to authorize
-6. Copy the generated Token
+### 获取 Cloudflare API Token
+1. 登录 Cloudflare 控制台
+2. 进入「My Profile」→「API Tokens」
+3. 点击「Create Token」
+4. 选择「Edit zone DNS」模板
+5. 选择需要授权的域名区域
+6. 复制生成的 Token
 
-### Obtaining Zone ID
-1. In Cloudflare domain control panel
-2. Find the 「API」section at bottom right of the page
-3. Copy the 「Zone ID」
+### 获取 Zone ID
+1. 在 Cloudflare 域名控制面板
+2. 在页面右下角找到「API」区域
+3. 复制「Zone ID」
 
-### Multiple Domain Configuration
-Supports updating multiple domain records simultaneously:
+### 多域名配置
+支持同时更新多个域名记录：
 ```ini
 DNS_RECORD_NAME=example.com,www.example.com,subdomain.example.com
 ```
 
-### IPv6 Support
-To update AAAA records (IPv6): (Untested)
+### IPv6 支持
+如需更新 AAAA 记录（IPv6）：(未测试)
 ```ini
 DNS_RECORD_TYPE=AAAA
 ```
 
-## Troubleshooting
+## 故障排除
 
-### View Detailed Logs
+### 查看详细日志
 ```bash
 docker logs cloudflare-ddns
 ```
 
-### Test Configuration
+### 测试配置
 ```bash
 docker run -it --rm --env-file .env yemiancheng/cloudflare-ddns:latest
 ```
 
-### Common Errors
-1. **Authentication Failed**: Check if API Token is correct
-2. **Zone ID Error**: Confirm Zone ID matches the domain
-3. **Insufficient Permissions**: Ensure API Token has DNS edit permissions
+### 常见错误
+1. **认证失败**：检查 API Token 是否正确
+2. **Zone ID 错误**：确认 Zone ID 与域名匹配
+3. **权限不足**：确保 API Token 具有 DNS 编辑权限
 
-## Version Update
+## 版本更新
 ```bash
 docker pull yemiancheng/cloudflare-ddns:latest
 docker-compose down
 docker-compose up -d
 ```
 
-## Technical Support
-If you encounter issues, please submit an Issue to the project repository:
+## 技术支持
+如遇问题，请提交 Issue 至项目仓库：
 [https://github.com/ymc-github/cloudflare-ddns](https://github.com/ymc-github/cloudflare-ddns)
 
-## License
+## 许可证
 MIT License
