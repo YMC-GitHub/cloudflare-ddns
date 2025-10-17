@@ -25,10 +25,10 @@ on:
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
-  
+
 env:
   REGISTRY: docker.io
-  IMAGE_NAME: cloudflare-ddns
+  IMAGE_NAME: ${{ github.event.repository.name }}
 
 jobs:
   build-and-push:
