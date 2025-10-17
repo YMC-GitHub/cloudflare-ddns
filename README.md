@@ -37,13 +37,25 @@ cargo build --release
 
 Using Docker (recommended):
 ```bash
+# uc:1
+# docker rmi cloudflare-ddns:scratch || true
+# docker build --target runtime -t cloudflare-ddns:scratch .
+docker build --target runtime --build-arg USE_CHINA_MIRROR=true -t cloudflare-ddns:scratch .
+
+
+# uc2: clean + build binary (alpine) + pack to different docker images:
+# clean:
+docker rmi $(docker images | grep cloudflare-ddns | grep -v dev | awk '{print $3}')
+
+# build:
 # docker build --progress=plain -f Dockerfile.minimal -t cloudflare-ddns:optimized .
 ./scripts/build-alpine-optimized.sh
 
-# 使用 Alpine 版本
+# use the output binary file to build different images:
+# # 使用 Alpine 版本
 docker build -f Dockerfile.alpine -t cloudflare-ddns:alpine .
 
-# 使用 Scratch 版本
+# # 使用 Scratch 版本
 docker build -f Dockerfile.scratch -t cloudflare-ddns:scratch .
 
 docker build -f Dockerfile.alpine -t cloudflare-ddns:latest .
@@ -70,25 +82,20 @@ cargo build --release --target x86_64-unknown-linux-musl
 rustup target add x86_64-pc-windows-msvc
 cargo build --release --target x86_64-pc-windows-msvc
 
-# macOS (from Linux)
+# macOS (from Linux)  (not build and test)
 rustup target add x86_64-apple-darwin
 cargo build --release --target x86_64-apple-darwin
 ```
 
+#### Compilation Features
 
-#### Platform-specific Notes
+- `native-tls` (default): Uses platform-native TLS (OpenSSL on Linux, Secure Transport on macOS, Schannel on Windows)
+- `rustls`: Uses Rust TLS implementation (smaller binaries, no external dependencies)
 
-**Linux:**
-- Use musl targets for maximum compatibility (static linking)
-- glibc targets are smaller but require glibc on target system
-
-**Windows:**
-- MSVC target: Better performance, requires VC++ redistributable
-- GNU target: No external dependencies, larger binary
-
-**macOS:**
-- Universal binaries not provided, choose appropriate architecture
-- AArch64 for Apple Silicon, x86_64 for Intel Macs
+Build with RustLS:
+```bash
+cargo build --release --no-default-features --features rustls
+```
 
 ## Binary Sizes
 
@@ -99,16 +106,6 @@ cloudflare-ddns   scratch     3.34MB
 cloudflare-ddns   alpine      16.5MB
 cloudflare-ddns   latest      16.5MB
 cloudflare-ddns   optimized   16.5MB
-```
-
-## Features
-
-- `native-tls` (default): Uses platform-native TLS (OpenSSL on Linux, Secure Transport on macOS, Schannel on Windows)
-- `rustls`: Uses Rust TLS implementation (smaller binaries, no external dependencies)
-
-Build with RustLS:
-```bash
-cargo build --release --no-default-features --features rustls
 ```
 
 ## Usage
