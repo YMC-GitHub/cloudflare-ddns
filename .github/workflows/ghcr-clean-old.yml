@@ -1,0 +1,18 @@
+name: Cleanup Old Images
+on:
+  schedule:
+    - cron: '0 2 * * 0'  # 每周日凌晨2点
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+    #   - name: Delete images older than 30 days
+    #     run: |
+    #       gh api repos/${{ github.repository }}/packages/container/cloudflare-ddns/versions \
+    #         --jq '.[] | select(.updated_at < "$(date -d "30 days ago" -Iseconds)") | .id' | \
+    #         xargs -I {} gh api repos/${{ github.repository }}/packages/container/cloudflare-ddns/versions/{} --method DELETE
+
+      - name: Keep the latest 10 images
+        run: |
+          gh api repos/owner/repo/packages/container/package-name --method DELETE
+    
