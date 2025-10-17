@@ -37,6 +37,26 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Set up flags
+        id: flags
+        run: |
+          # 检测是否是 main 分支
+          if [ "${{ github.ref }}" = "refs/heads/main" ]; then
+            echo "is_main=true" >> $GITHUB_OUTPUT
+          else
+            echo "is_main=false" >> $GITHUB_OUTPUT
+          fi
+          
+          # 设置 debug_mode 标志
+          if [ "${{ inputs.debug_mode }}" = "true" ]; then
+            echo "debug_mode=true" >> $GITHUB_OUTPUT
+          else
+            echo "debug_mode=false" >> $GITHUB_OUTPUT
+          fi
+          
+          echo "is_main: ${{ steps.flags.outputs.is_main }}"
+          echo "debug_mode: ${{ steps.flags.outputs.debug_mode }}"
+
       - name: Debug Information
         run: |
           echo "Debug Mode: ${{ inputs.debug_mode }}"
@@ -45,6 +65,7 @@ jobs:
           echo "Trigger Event: ${{ github.event_name }}"
           echo "Ref: ${{ github.ref }}"
           echo "SHA: ${{ github.sha }}"
+          echo "Is Main Branch: ${{ steps.flags.outputs.is_main }}"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -62,10 +83,15 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}
           tags: |
+            # type=ref,event=tag
+            # type=raw,value=scratch,enable=true
+            # type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+            # type=raw,value=debug-${{ github.sha }},enable=${{ inputs.debug_mode }}
+
             type=ref,event=tag
-            type=raw,value=scratch,enable=${{ github.ref == 'refs/heads/main' }}
-            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
-            type=raw,value=debug-${{ github.sha }},enable=${{ inputs.debug_mode }}
+            type=raw,value=scratch,enable=${{ steps.flags.outputs.is_main == 'true' }}
+            type=raw,value=latest,enable=${{ steps.flags.outputs.is_main == 'true' }}
+            type=raw,value=debug-${{ github.sha }},enable=${{ steps.flags.outputs.debug_mode == 'true' }}
 
       - name: Build Docker image
         uses: docker/build-push-action@v5
