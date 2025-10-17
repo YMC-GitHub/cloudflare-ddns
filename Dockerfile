@@ -1,13 +1,31 @@
 # =============================================
-# 多阶段构建：构建 + 发布到 Docker Hub
+# 多阶段构建：构建 + 发布到 GitHub Container Registry
 # =============================================
+
+# 基础构建参数
+ARG USE_CHINA_MIRROR=false
+ARG ALPINE_MIRROR=mirrors.aliyun.com
+ARG RUST_MIRROR=tuna
+
 
 # 阶段1: 构建阶段
 FROM rust:1.90-alpine3.20 AS builder
 
-# 镜像源替换（可选，用于加速）
-RUN sed -i 's|dl-cdn.alpinelinux.org|mirrors.ustc.edu.cn|g' /etc/apk/repositories
+# 继承构建参数
+ARG USE_CHINA_MIRROR
+ARG ALPINE_MIRROR
+ARG RUST_MIRROR
 
+
+# 条件性配置镜像源
+RUN if [ "$USE_CHINA_MIRROR" = "true" ]; then \
+        echo "🔧 Using China mirror: $ALPINE_MIRROR" && \
+        sed -i "s|dl-cdn.alpinelinux.org|$ALPINE_MIRROR|g" /etc/apk/repositories; \
+    else \
+        echo "🌍 Using default Alpine sources"; \
+    fi
+
+# 安装构建依赖
 RUN apk update && apk add --no-cache \
     git \
     gcc \
@@ -21,9 +39,57 @@ RUN apk update && apk add --no-cache \
 
 WORKDIR /app
 
-# 先复制 Cargo 配置文件（利用Docker缓存）
-COPY .cargo/ .cargo/
-COPY Cargo.toml Cargo.lock ./
+# 先复制 Cargo 配置文件
+# COPY .cargo/ .cargo/
+# COPY Cargo.toml Cargo.lock ./
+
+# 只复制必要的配置
+COPY Cargo.toml ./
+
+# 立即生成容器环境专用的 lockfile
+# RUN cargo generate-lockfile
+
+# 条件性配置 Cargo 国内源
+RUN if [ "$USE_CHINA_MIRROR" = "true" ]; then \
+        echo "🔧 Configuring Cargo China mirror: $RUST_MIRROR" && \
+        mkdir -p /usr/local/cargo/ && \
+        case "$RUST_MIRROR" in \
+            "tuna") \
+                cat > /usr/local/cargo/config << 'EOF' \
+[source.crates-io]
+replace-with = 'tuna'
+
+[source.tuna]
+registry = "https://mirrors.tuna.tsinghua.edu.cn/git/crates.io-index.git"
+
+[net]
+git-fetch-with-cli = true
+EOF
+                ;; \
+            "ustc") \
+                cat > /usr/local/cargo/config << 'EOF' \
+[source.crates-io]
+replace-with = 'ustc'
+
+[source.ustc]
+registry = "https://mirrors.ustc.edu.cn/crates.io-index/"
+
+[net]
+git-fetch-with-cli = true
+EOF
+                ;; \
+        esac && \
+        echo "✅ Cargo mirror configured: $RUST_MIRROR"; \
+    else \
+        echo "🌍 Using default Cargo sources"; \
+        # 设置 git-fetch-with-cli 以提高稳定性 \
+        mkdir -p /usr/local/cargo/ && \
+        cat > /usr/local/cargo/config << 'EOF' \
+[net]
+git-fetch-with-cli = true
+EOF
+    fi
+
 
 # 创建假的 src 目录来缓存依赖
 RUN mkdir -p src && \
@@ -31,24 +97,44 @@ RUN mkdir -p src && \
     echo "// dummy lib" > src/lib.rs
 
 # 构建依赖（缓存层）
+RUN cargo fetch
+
 RUN cargo build --release --target x86_64-unknown-linux-musl
 
 # 现在复制真正的源代码
 COPY src/ src/
 
-# 清理假的 main.rs 并重新构建
+# 真实构建
 RUN rm -f target/x86_64-unknown-linux-musl/release/deps/cloudflare_ddns-* && \
     cargo build --release --target x86_64-unknown-linux-musl
 
-# 移除调试符号并压缩
-RUN strip /app/target/x86_64-unknown-linux-musl/release/cloudflare-ddns
-RUN upx --best --lzma /app/target/x86_64-unknown-linux-musl/release/cloudflare-ddns
+# 优化二进制（移除调试符号并压缩）
+RUN strip target/x86_64-unknown-linux-musl/release/cloudflare-ddns && \
+    upx --best --lzma target/x86_64-unknown-linux-musl/release/cloudflare-ddns
+
+# 验证构建结果
+RUN echo "=== Build Verification ===" && \
+    ls -lh target/x86_64-unknown-linux-musl/release/cloudflare-ddns && \
+    file target/x86_64-unknown-linux-musl/release/cloudflare-ddns && \
+    echo "=== Static Link Check ===" && \
+    ldd target/x86_64-unknown-linux-musl/release/cloudflare-ddns 2>&1 | head -3
 
 # 阶段2: 证书准备阶段
 FROM alpine:3.20 AS certs
-RUN sed -i 's|dl-cdn.alpinelinux.org|mirrors.aliyun.com|g' /etc/apk/repositories
-RUN apk update && apk add --no-cache ca-certificates tzdata
-RUN update-ca-certificates
+
+# 继承构建参数
+ARG USE_CHINA_MIRROR
+ARG ALPINE_MIRROR
+
+# 条件性配置镜像源
+RUN if [ "$USE_CHINA_MIRROR" = "true" ]; then \
+        echo "🔧 Using China mirror in certs stage: $ALPINE_MIRROR" && \
+        sed -i "s|dl-cdn.alpinelinux.org|$ALPINE_MIRROR|g" /etc/apk/repositories; \
+    fi
+
+# 安装证书和时区数据
+RUN apk update && apk add --no-cache ca-certificates tzdata && \
+    update-ca-certificates
 
 # 阶段3: 最终运行镜像（scratch）
 FROM scratch AS runtime
