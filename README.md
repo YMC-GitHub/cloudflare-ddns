@@ -222,4 +222,4 @@ If you encounter issues, please submit an Issue to the project repository:
 [https://github.com/ymc-github/cloudflare-ddns](https://github.com/ymc-github/cloudflare-ddns)
 
 ## License
-MIT License
+MIT OR Apache-2.0

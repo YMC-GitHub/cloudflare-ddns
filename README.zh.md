@@ -223,4 +223,4 @@ docker-compose up -d
 [https://github.com/ymc-github/cloudflare-ddns](https://github.com/ymc-github/cloudflare-ddns)
 
 ## 许可证
-MIT License
+MIT OR Apache-2.0
