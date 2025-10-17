@@ -19,7 +19,7 @@ RUN apk update && apk add --no-cache \
 FROM base AS deps
 WORKDIR /app
 COPY .cargo/ .cargo/
-COPY Cargo.toml Cargo.lock ./
+COPY Cargo.toml ./
 RUN mkdir -p src && \
     echo "fn main() {println!(\"dev\")}" > src/main.rs && \
     cargo fetch && \
