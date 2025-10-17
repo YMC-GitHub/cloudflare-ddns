@@ -22,6 +22,10 @@ on:
         default: 'runtime'
         type: string
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+  
 env:
   REGISTRY: docker.io
   IMAGE_NAME: cloudflare-ddns
