@@ -173,6 +173,11 @@ struct CliArgs {
     #[arg(long, default_value = "120")]
     ttl: u32,
     
+    /// Show configuration and exit
+    #[arg(long, default_value = "false")]
+    show_config: bool,
+    
+
     /// Network identifier
     #[arg(long, env = "NETWORK")]
     network: Option<String>,
@@ -206,6 +211,23 @@ fn default_ttl() -> u32 {
     120 // 2 minutes
 }
 
+fn load_dotenv_from_current_dir() -> bool {
+    debug!("Trying to load .env file from current directory");
+    match dotenvy::dotenv() {
+        Ok(_) => {
+            debug!("Successfully loaded .env file from current directory");
+            true
+        }
+        Err(dotenvy::Error::Io(io_err)) if io_err.kind() == std::io::ErrorKind::NotFound => {
+            debug!("No .env file found in current directory");
+            false
+        }
+        Err(e) => {
+            warn!("Failed to load .env file from current directory: {}", e);
+            false
+        }
+    }
+}
 impl AppConfig {
     fn new() -> Result<Self> {
         // config 处理流程: 设默认值 -> 使用环境变量文件变量覆盖(加载环境变量文件 -> 环境变量与配置名字映射 -> 反序列化) -> 使用命令行参数覆盖 (命令行参数解析 -> 手动覆盖)
@@ -223,61 +245,47 @@ impl AppConfig {
         cfg = cfg.set_default("platform_identifier", host_identifier)?;
 
         // 加载环境变量文件
-        // 优先级 1: 显式指定的配置文件 (最高优先级)
-        if let Some(config_path) = &cli_args.config {
-            debug!("Loading config from: {:?}", config_path);
 
-            // 检查文件是否存在
+       // 统一的 .env 文件加载逻辑
+
+        let config_loaded = 
+        // 优先级 1: --config 命令行参数
+        if let Some(config_path) = &cli_args.config {
+            debug!("Loading config from --config: {:?}", config_path);
             if !config_path.exists() {
                 return Err(anyhow::anyhow!("Config file not found: {:?}", config_path));
             }
-
-            // uc1:
-            // cfg = cfg.add_source(File::with_name(&config_path.to_string_lossy()).required(true));
-            // uc2: 明确指定使用 Dotenv 格式
-            // cfg = cfg.add_source(
-            //     File::with_name(&config_path.to_string_lossy())
-            //         .format(config::FileFormat::Dotenv)
-            //         .required(true)
-            // );
-            
-            // //uc3: 根据文件扩展名决定格式，默认为 Dotenv
-            // let file_format = match config_path.extension().and_then(|ext| ext.to_str()) {
-            //     Some("json") => config::FileFormat::Json,
-            //     Some("yaml") | Some("yml") => config::FileFormat::Yaml,
-            //     Some("toml") => config::FileFormat::Toml,
-            //     Some("ini") => config::FileFormat::Ini,
-            //     _ => config::FileFormat::Dotenv, // 默认使用 Dotenv 格式
-            // };
-            // cfg = cfg.add_source(
-            //     File::with_name(&config_path.to_string_lossy())
-            //         .format(file_format)
-            //         .required(true)
-
-            // // uc4: 直接使用 dotenvy 加载指定文件
             dotenvy::from_path(config_path)?;
-
-        } else {
-            // 优先级 2: 环境变量指定的配置文件
-            if let Ok(env_file) = std::env::var("ENV_FILE") {
-                // debug!("Loading config from ENV_FILE: {}", env_file);
-                // cfg = cfg.add_source(File::with_name(&env_file).required(false));
-
+            debug!("Successfully loaded config from: {:?}", config_path);
+            true
+        }
+        // 优先级 2: ENV_FILE 环境变量
+        else if let Ok(env_file) = std::env::var("ENV_FILE") {
+            if !env_file.trim().is_empty() {
                 debug!("Loading config from ENV_FILE: {}", env_file);
                 let env_path = std::path::Path::new(&env_file);
                 if env_path.exists() {
                     dotenvy::from_path(env_path)?;
                     debug!("Successfully loaded config from ENV_FILE: {}", env_file);
+                    true
                 } else {
-                    debug!("ENV_FILE not found: {}, skipping", env_file);
+                    debug!("ENV_FILE not found: {}, falling back to .env in current directory", env_file);
+                    // ENV_FILE 指定的文件不存在，继续到优先级 3
+                    load_dotenv_from_current_dir()
                 }
             } else {
-                // 优先级 3: 当前目录的 .env 文件 (向后兼容)
-                debug!("Trying to load .env file from current directory");
-                let _ = dotenvy::dotenv();
+                debug!("ENV_FILE is empty, falling back to .env in current directory");
+                // ENV_FILE 为空，继续到优先级 3
+                load_dotenv_from_current_dir()
             }
         }
+        // 优先级 3: 当前目录的 .env 文件
+        else {
+            debug!("ENV_FILE not set, loading .env from current directory");
+            load_dotenv_from_current_dir()
+        };
 
+        
         // 优先级 4: 环境变量
         // println!("=== 环境变量与配置名字映射 ===");
         // 自动环境变量映射:CF_API_TOKEN -> cf_api_token
@@ -337,7 +345,7 @@ impl AppConfig {
         Ok(app_config)
     }
 
-    
+
     fn apply_cli_args(app_config: &mut AppConfig, cli_args: CliArgs) {
         if let Some(token) = cli_args.cf_api_token {
             app_config.cf_api_token = token;
@@ -390,6 +398,59 @@ impl AppConfig {
         }
         
         Ok(())
+    }
+
+      /// 显示配置信息（用于 --show-config）
+      fn display_config(&self) {
+        println!("📋 Cloudflare DDNS Configuration");
+        println!("==========================================");
+        
+        // Cloudflare API 配置
+        println!("🔑 Cloudflare API Configuration:");
+        println!("  API Token: {}", if self.cf_api_token.is_empty() { 
+            "❌ Not set".to_string() 
+        } else { 
+            "✅ Set".to_string() 
+        });
+        println!("  Zone ID: {}", self.cf_zone_id);
+        
+        // DNS 记录配置
+        println!("🌐 DNS Record Configuration:");
+        println!("  Record Type: {}", self.dns_record_type);
+        println!("  Proxy Enabled: {}", self.proxy);
+        println!("  TTL: {} seconds", self.ttl);
+        
+        // 域名列表
+        let domains = self.get_domain_names();
+        println!("  Domains ({}):", domains.len());
+        for domain in &domains {
+            println!("    - {}", domain);
+        }
+        
+        // 调度配置
+        println!("⏰ Scheduling Configuration:");
+        match self.update_interval {
+            Some(interval) => println!("  Update Interval: {} seconds", interval),
+            None => println!("  Update Interval: default (300 seconds)"),
+        }
+        
+        // 网络和平台配置
+        println!("🔧 Additional Configuration:");
+        if let Some(network) = &self.network {
+            println!("  Network: {}", network);
+        } else {
+            println!("  Network: Not specified");
+        }
+        println!("  Platform Identifier: {}", self.platform_identifier);
+        
+        // 配置验证状态
+        println!("✅ Configuration Validation:");
+        match self.validate() {
+            Ok(()) => println!("  Status: ✅ Valid"),
+            Err(e) => println!("  Status: ❌ Invalid - {}", e),
+        }
+        
+        println!("==========================================");
     }
 }
 
@@ -713,6 +774,7 @@ fn print_help() {
     println!("    --update-interval <SECONDS>   Update interval in seconds [default: 300]");
     println!("    --once                        Run once and exit");
     println!("    --show-platform               Show platform information");
+    println!("    --show-config                 Show configuration and exit");
     println!("    --use-rustls                  Use RustLS instead of native TLS");
     println!("    --help, -h                    Print help information");
     println!("    --version, -v                 Print version information");
@@ -787,6 +849,12 @@ async fn main() -> Result<()> {
             std::process::exit(1);
         }
     };
+
+    // 检查 --show-config 参数
+    if cli_args.show_config {
+        config.display_config();
+        return Ok(());
+    }
     
     // 验证配置
     if let Err(e) = config.validate() {
