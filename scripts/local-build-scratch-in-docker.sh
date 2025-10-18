@@ -358,7 +358,7 @@ main() {
         "analyze")
             analyze_image_size
             analyze_image_layers
-            analyze_binary
+            # analyze_binary
             ;;
         "test")
             test_functionality
