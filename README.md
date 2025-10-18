@@ -46,12 +46,8 @@ EOF
 # docker run --rm yemiancheng/cloudflare-ddns:latest --help
 # docker run --rm yemiancheng/cloudflare-ddns:latest --version
 # docker run --rm yemiancheng/cloudflare-ddns:latest --show-platform
-
-docker run -d \
-  --name cloudflare-ddns \
-  --restart unless-stopped \
-  --env-file .env \
-  yemiancheng/cloudflare-ddns:latest
+# docker run --rm -env-file .env yemiancheng/cloudflare-ddns:latest --show-config
+docker run -d --name cloudflare-ddns --restart unless-stopped --env-file .env yemiancheng/cloudflare-ddns:latest
 ```
 
 #### Runtime Log Example
