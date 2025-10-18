@@ -260,8 +260,17 @@ impl AppConfig {
         } else {
             // 优先级 2: 环境变量指定的配置文件
             if let Ok(env_file) = std::env::var("ENV_FILE") {
+                // debug!("Loading config from ENV_FILE: {}", env_file);
+                // cfg = cfg.add_source(File::with_name(&env_file).required(false));
+
                 debug!("Loading config from ENV_FILE: {}", env_file);
-                cfg = cfg.add_source(File::with_name(&env_file).required(false));
+                let env_path = std::path::Path::new(&env_file);
+                if env_path.exists() {
+                    dotenvy::from_path(env_path)?;
+                    debug!("Successfully loaded config from ENV_FILE: {}", env_file);
+                } else {
+                    debug!("ENV_FILE not found: {}, skipping", env_file);
+                }
             } else {
                 // 优先级 3: 当前目录的 .env 文件 (向后兼容)
                 debug!("Trying to load .env file from current directory");
