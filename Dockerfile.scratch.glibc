@@ -1,0 +1,85 @@
+# 构建阶段：使用 glibc 环境
+FROM rust:1.90-bookworm AS builder
+
+# 设置国内镜像源
+RUN sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list && \
+    sed -i 's/security.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list
+
+# 安装构建依赖
+RUN apt-get update && apt-get install -y \
+    git \
+    gcc \
+    build-essential \
+    pkg-config \
+    libssl-dev \
+    upx-ucl \
+    file \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# 复制 Cargo 配置
+COPY .cargo/ .cargo/
+COPY Cargo.toml ./
+
+# 依赖缓存：创建假的源代码来预编译依赖
+RUN mkdir -p src && \
+    echo "fn main() {println!(\"dummy\")}" > src/main.rs && \
+    echo "// dummy lib" > src/lib.rs && \
+    cargo fetch && \
+    cargo build --release && \
+    rm -rf src
+
+# 复制真正的源代码并重新构建
+COPY src/ src/
+RUN rm -f target/release/deps/cloudflare_ddns-* && \
+    cargo build --release
+
+# 二进制优化
+RUN strip target/release/cloudflare-ddns && \
+    upx --best --lzma target/release/cloudflare-ddns
+
+# 验证构建结果
+RUN echo "=== 优化后的 Linux 可执行文件 ===" && \
+    ls -lh target/release/cloudflare-ddns && \
+    echo "=== 文件信息 ===" && \
+    file target/release/cloudflare-ddns && \
+    echo "=== 动态库依赖 ===" && \
+    ldd target/release/cloudflare-ddns || echo "静态链接或无法检查"
+
+# 运行时阶段：最小化镜像（基于你的配置）
+FROM alpine:3.20 AS runtime-base
+
+# 设置国内镜像源
+RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.aliyun.com/g' /etc/apk/repositories
+
+# 安装必要的运行时依赖
+RUN apk update && apk add --no-cache \
+    ca-certificates \
+    tzdata \
+    libgcc \
+    && update-ca-certificates
+
+# 最终运行时镜像
+FROM scratch
+
+# 复制 SSL 证书（必须，因为你的应用需要 HTTPS）
+COPY --from=runtime-base /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
+
+# 用户信息（可选）
+# COPY --from=runtime-base /etc/passwd /etc/passwd
+# COPY --from=runtime-base /etc/group /etc/group
+
+# 时区信息
+COPY --from=runtime-base /usr/share/zoneinfo /usr/share/zoneinfo
+ENV TZ=Asia/Shanghai
+
+# C 运行时库（glibc 动态链接需要）
+COPY --from=runtime-base /lib/ld-musl-x86_64.so.1 /lib/
+COPY --from=runtime-base /usr/lib/libgcc_s.so.1 /usr/lib/
+
+# 复制应用程序
+COPY --from=builder /app/target/release/cloudflare-ddns /app/
+
+# 设置入口点
+ENTRYPOINT ["/app/cloudflare-ddns"]

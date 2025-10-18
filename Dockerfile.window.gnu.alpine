@@ -1,0 +1,85 @@
+# Dockerfile.windows-gnu-multi-optimized
+
+# 基础层：系统依赖和工具链
+FROM rust:1.90-alpine3.20 AS base
+
+# 设置 Alpine 国内镜像源
+RUN sed -i 's|dl-cdn.alpinelinux.org|mirrors.aliyun.com|g' /etc/apk/repositories
+
+RUN apk update && apk add --no-cache \
+    git \
+    gcc \
+    musl-dev \
+    openssl-dev \
+    build-base \
+    pkgconfig \
+    openssl-libs-static \
+    mingw-w64-gcc \
+    upx \
+    file \
+    bash
+
+# 安装 Windows GNU 目标并配置 Cargo 国内镜像
+RUN rustup target add x86_64-pc-windows-gnu
+
+# 依赖层：Rust 依赖缓存
+FROM base AS deps
+WORKDIR /app
+
+# 复制 Cargo 配置
+COPY .cargo/ .cargo/
+COPY Cargo.toml Cargo.lock ./
+
+# 创建假的源代码来预编译依赖
+RUN mkdir -p src && \
+    echo "fn main() {println!(\"dummy\")}" > src/main.rs && \
+    echo "// dummy lib" > src/lib.rs && \
+    cargo fetch && \
+    cargo build --release --target x86_64-pc-windows-gnu && \
+    rm -rf src
+
+# 开发层：开发环境（可选）
+FROM base AS development
+WORKDIR /app
+COPY --from=deps /app/.cargo .cargo/
+COPY --from=deps /usr/local/cargo /usr/local/cargo/
+RUN cargo install cargo-watch
+COPY . .
+CMD ["cargo", "watch", "-x", "run"]
+
+# 构建阶段：真正的应用程序构建
+FROM base AS builder
+WORKDIR /app
+
+# 复制缓存的依赖
+COPY --from=deps /app/target target/
+COPY --from=deps /app/.cargo .cargo/
+COPY --from=deps /usr/local/cargo /usr/local/cargo/
+
+# 复制 Cargo 配置
+COPY Cargo.toml Cargo.lock ./
+
+# 复制真正的源代码
+COPY src/ src/
+
+# 清理假的二进制并重新构建
+RUN rm -f target/x86_64-pc-windows-gnu/release/deps/cloudflare_ddns-* && \
+    cargo build --release --target x86_64-pc-windows-gnu
+
+# 二进制优化：移除调试符号并压缩
+RUN strip target/x86_64-pc-windows-gnu/release/cloudflare-ddns.exe && \
+    upx --best --lzma target/x86_64-pc-windows-gnu/release/cloudflare-ddns.exe
+
+# 验证构建结果
+RUN echo "=== 优化后的 Windows 可执行文件 ===" && \
+    ls -lh target/x86_64-pc-windows-gnu/release/cloudflare-ddns.exe && \
+    echo "=== 文件信息 ===" && \
+    file target/x86_64-pc-windows-gnu/release/cloudflare-ddns.exe
+
+# 输出阶段：最小化镜像
+FROM alpine:3.20 AS output
+WORKDIR /app
+COPY --from=builder /app/target/x86_64-pc-windows-gnu/release/cloudflare-ddns.exe .
+
+ENTRYPOINT ["echo", "hello world"]
+# CMD ["echo", "hello world"]
