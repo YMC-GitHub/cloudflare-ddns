@@ -145,6 +145,10 @@ struct AppConfig {
     long_about = "A dynamic DNS updater for Cloudflare that works on Windows, Linux, and macOS.\nSupports multiple domains and both IPv4 and IPv6 addresses."
 )]
 struct CliArgs {
+    /// Configuration file path
+    #[arg(long, short = 'c')]
+    config: Option<std::path::PathBuf>,
+
     /// Cloudflare API token
     #[arg(long, env = "CF_API_TOKEN")]
     cf_api_token: Option<String>,
@@ -206,6 +210,7 @@ impl AppConfig {
     fn new() -> Result<Self> {
         // config 处理流程: 设默认值 -> 使用环境变量文件变量覆盖(加载环境变量文件 -> 环境变量与配置名字映射 -> 反序列化) -> 使用命令行参数覆盖 (命令行参数解析 -> 手动覆盖)
         
+        let cli_args = CliArgs::parse();
         let platform = PlatformInfo::new();
         let host_identifier = get_host_identifier().unwrap_or_else(|_| "unknown".to_string());
         
@@ -217,31 +222,54 @@ impl AppConfig {
         cfg = cfg.set_default("ttl", 120)?;
         cfg = cfg.set_default("platform_identifier", host_identifier)?;
 
-        // 详细的环境变量调试
-        // #[cfg(debug_assertions)]
-        // {
-        //     println!("=== 环境变量检查 ===");
-        //     for (key, value) in std::env::vars() {
-        //         if key.contains("CF") || key.contains("DNS") || key.contains("TOKEN") {
-        //             println!("环境变量 {} = {}", key, value);
-        //         }
-        //     }    
-        // }
-
-
         // 加载环境变量文件
-        if let Ok(env_file) = std::env::var("ENV_FILE") {
-            // println!("尝试加载环境文件: {}", env_file);
-            cfg = cfg.add_source(File::with_name(&env_file).required(false));
+        // 优先级 1: 显式指定的配置文件 (最高优先级)
+        if let Some(config_path) = &cli_args.config {
+            debug!("Loading config from: {:?}", config_path);
+
+            // 检查文件是否存在
+            if !config_path.exists() {
+                return Err(anyhow::anyhow!("Config file not found: {:?}", config_path));
+            }
+
+            // uc1:
+            // cfg = cfg.add_source(File::with_name(&config_path.to_string_lossy()).required(true));
+            // uc2: 明确指定使用 Dotenv 格式
+            // cfg = cfg.add_source(
+            //     File::with_name(&config_path.to_string_lossy())
+            //         .format(config::FileFormat::Dotenv)
+            //         .required(true)
+            // );
+            
+            // //uc3: 根据文件扩展名决定格式，默认为 Dotenv
+            // let file_format = match config_path.extension().and_then(|ext| ext.to_str()) {
+            //     Some("json") => config::FileFormat::Json,
+            //     Some("yaml") | Some("yml") => config::FileFormat::Yaml,
+            //     Some("toml") => config::FileFormat::Toml,
+            //     Some("ini") => config::FileFormat::Ini,
+            //     _ => config::FileFormat::Dotenv, // 默认使用 Dotenv 格式
+            // };
+            // cfg = cfg.add_source(
+            //     File::with_name(&config_path.to_string_lossy())
+            //         .format(file_format)
+            //         .required(true)
+
+            // // uc4: 直接使用 dotenvy 加载指定文件
+            dotenvy::from_path(config_path)?;
+
         } else {
-            // 尝试加载 .env 文件
-            // println!("尝试加载 .env 文件");
-            let _ = dotenvy::dotenv();
+            // 优先级 2: 环境变量指定的配置文件
+            if let Ok(env_file) = std::env::var("ENV_FILE") {
+                debug!("Loading config from ENV_FILE: {}", env_file);
+                cfg = cfg.add_source(File::with_name(&env_file).required(false));
+            } else {
+                // 优先级 3: 当前目录的 .env 文件 (向后兼容)
+                debug!("Trying to load .env file from current directory");
+                let _ = dotenvy::dotenv();
+            }
         }
 
-
-
-
+        // 优先级 4: 环境变量
         // println!("=== 环境变量与配置名字映射 ===");
         // 自动环境变量映射:CF_API_TOKEN -> cf_api_token
         let env_source = std::env::vars()
@@ -290,44 +318,18 @@ impl AppConfig {
 
 
         let config = cfg.build()?;
-
-        // #[cfg(debug_assertions)]
-        // {
-        //     println!("=== 配置内容检查 ===");
-        //     // 尝试获取关键配置值来调试
-        //     println!("cf_api_token: {:?}", config.get::<String>("cf_api_token"));
-        //     println!("cf_zone_id: {:?}", config.get::<String>("cf_zone_id"));
-        //     println!("dns_record_name: {:?}", config.get::<String>("dns_record_name"));
-        // }
-
-
-        
-        
         // 尝试反序列化
         // println!("=== 尝试反序列化配置 ===");
         let mut app_config: AppConfig = config.try_deserialize()?;
         
-    
-        // #[cfg(debug_assertions)]
-        // {
-        //     println!("=== 反序列化成功 ===");
-        //     println!("cf_api_token: '{}'", app_config.cf_api_token);
-        //     println!("cf_zone_id: '{}'", app_config.cf_zone_id);
-        //     println!("dns_record_name: '{}'", app_config.dns_record_name);
-        // }
+        // 优先级 5: 命令行参数 (覆盖所有其他来源)
+        Self::apply_cli_args(&mut app_config, cli_args);
 
-        // 应用命令行参数（覆盖环境变量和配置文件）
-        let cli_args = CliArgs::parse();
-        
-        // 移除 show_platform 检查，因为已经在 main 函数中处理了
-        // if cli_args.show_platform {
-        //     println!("Platform: {}", platform.display());
-        //     println!("OS: {}", platform.os);
-        //     println!("Architecture: {}", platform.arch);
-        //     println!("Family: {}", platform.family);
-        //     std::process::exit(0);
-        // }
-        
+        Ok(app_config)
+    }
+
+    
+    fn apply_cli_args(app_config: &mut AppConfig, cli_args: CliArgs) {
         if let Some(token) = cli_args.cf_api_token {
             app_config.cf_api_token = token;
         }
@@ -346,13 +348,9 @@ impl AppConfig {
         if let Some(interval) = cli_args.update_interval {
             app_config.update_interval = Some(interval);
         }
-        
         app_config.proxy = cli_args.proxy;
         app_config.ttl = cli_args.ttl;
-        
-        Ok(app_config)
     }
-
     // 解析多个域名
     fn get_domain_names(&self) -> Vec<String> {
         self.dns_record_name
@@ -695,6 +693,7 @@ fn print_help() {
     println!("    cloudflare-ddns [OPTIONS]");
     println!();
     println!("OPTIONS:");
+    println!("    -c, --config <FILE>           Configuration file path");
     println!("    --cf-api-token <TOKEN>        Cloudflare API token");
     println!("    --cf-zone-id <ZONE_ID>        Cloudflare zone ID");
     println!("    --dns-record-name <NAME>      Domain name(s) separated by commas");
