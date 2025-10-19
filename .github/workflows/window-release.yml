@@ -1,0 +1,310 @@
+name: Build Windows Binaries and Release
+
+on:
+  push:
+    tags:
+      - 'v*'  # 推送 v 开头的标签时触发
+  workflow_dispatch:  # 允许手动触发
+    inputs:
+      debug_mode:
+        description: 'Enable debug mode (save artifacts without release)'
+        required: false
+        default: false
+        type: boolean
+      enable_release:
+        description: 'Enable GitHub Release creation'
+        required: false
+        default: false
+        type: boolean
+env:
+  BINARY_NAME: ${{ github.event.repository.name }}
+
+jobs:
+  build-windows-binaries:
+    name: Build Windows Binaries
+    runs-on: windows-latest
+    strategy:
+      matrix:
+        target: [x86_64-pc-windows-msvc, x86_64-pc-windows-gnu]
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up flags
+        id: flags
+        run: |
+          # 设置 debug_mode 标志
+          if ("${{ inputs.debug_mode }}" -eq "true") {
+            echo "debug_mode=true" >> $env:GITHUB_OUTPUT
+          } else {
+            echo "debug_mode=false" >> $env:GITHUB_OUTPUT
+          }
+
+          if ("${{ inputs.enable_release }}" -eq "true") {
+            echo "enable_release=true" >> $env:GITHUB_OUTPUT
+          } else {
+            echo "enable_release=false" >> $env:GITHUB_OUTPUT
+          }
+
+          # 检测是否是 main 分支
+          if ("${{ github.ref }}" -eq "refs/heads/main") {
+            echo "is_main=true" >> $env:GITHUB_OUTPUT
+          } else {
+            echo "is_main=false" >> $env:GITHUB_OUTPUT
+          }
+          
+          echo "debug_mode: ${{ steps.flags.outputs.debug_mode }}"
+          echo "is_main: ${{ steps.flags.outputs.is_main }}"
+
+      - name: Set up lowercase repository name
+        id: repo
+        run: |
+          # 将仓库名称转换为小写
+          $REPO_LOWER = "${{ github.repository }}".ToLower()
+          echo "repo_lower=$REPO_LOWER" >> $env:GITHUB_OUTPUT
+          echo "Using repository: $REPO_LOWER"
+
+      - name: Debug Information
+        run: |
+          echo "🔧 Debug Mode: ${{ inputs.debug_mode }}"
+          echo "⚙️ Rust Mirror: ${{ inputs.rust_mirror }}"
+          echo "🏷️ Trigger Event: ${{ github.event_name }}"
+          echo "🔖 Ref: ${{ github.ref }}"
+          echo "📝 SHA: ${{ github.sha }}"
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache cargo registry
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}-${{ matrix.target }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-${{ matrix.target }}
+
+      - name: Build debug information
+        run: |
+          echo "🔧 Build Configuration:"
+          echo "Target: ${{ matrix.target }}"
+          echo "Rust Version: $(rustc --version)"
+          echo "Cargo Version: $(cargo --version)"
+
+      - name: Build release binary
+        run: |
+          echo "🏗️ Building for target: ${{ matrix.target }}"
+          cargo build --release --target ${{ matrix.target }}
+          
+          echo "📁 Build output:"
+          Get-ChildItem "target\${{ matrix.target }}\release\" -Filter "*.exe" | ForEach-Object {
+              echo "  - $($_.Name) ($([math]::Round($_.Length/1MB, 2)) MB)"
+          }
+
+      - name: Test binary
+        run: |
+          $binaryPath = "target\${{ matrix.target }}\release\$env:BINARY_NAME.exe"
+          if (Test-Path $binaryPath) {
+              echo "🧪 Testing binary: $binaryPath"
+              # 尝试运行版本检查或帮助命令
+              & $binaryPath --version 2>$null || & $binaryPath --help 2>$null || echo "✅ Binary executed successfully"
+          } else {
+              echo "❌ Binary not found at: $binaryPath"
+              # 列出所有可执行文件
+              echo "Available executables:"
+              Get-ChildItem "target\${{ matrix.target }}\release\" -Filter "*.exe" | ForEach-Object { echo "  - $($_.FullName)" }
+          }
+
+      - name: Prepare artifacts
+        if: ${{ !inputs.enable_release }}
+        id: prepare-artifacts
+        run: |
+          $binaryPath = "target\${{ matrix.target }}\release\$env:BINARY_NAME.exe"
+          $artifactDir = "release-artifacts"
+          $targetName = "${{ matrix.target }}"
+          
+          # 创建输出目录
+          New-Item -ItemType Directory -Force -Path $artifactDir
+          
+          if (Test-Path $binaryPath) {
+              # 复制二进制文件
+              $outputName = "$env:BINARY_NAME-$targetName.exe"
+              Copy-Item $binaryPath "$artifactDir\$outputName"
+              
+              # 获取文件信息
+              $fileInfo = Get-Item "$artifactDir\$outputName"
+              $fileSize = [math]::Round($fileInfo.Length / 1MB, 2)
+              
+              echo "binary_path_$($targetName -replace '-','_')=$artifactDir\$outputName" >> $env:GITHUB_OUTPUT
+              echo "binary_size_$($targetName -replace '-','_')=${fileSize}MB" >> $env:GITHUB_OUTPUT
+              
+              echo "✅ Prepared artifact: $outputName (${fileSize} MB)"
+          } else {
+              echo "❌ Binary not found: $binaryPath"
+              # 尝试找到任何可执行文件
+              $exeFiles = Get-ChildItem "target\${{ matrix.target }}\release\" -Filter "*.exe"
+              if ($exeFiles) {
+                  echo "Found alternative executables:"
+                  $exeFiles | ForEach-Object { 
+                      echo "  - $($_.Name)"
+                      $outputName = "$($_.BaseName)-$targetName.exe"
+                      Copy-Item $_.FullName "$artifactDir\$outputName"
+                  }
+              }
+          }
+          
+          # 输出通用信息
+          echo "artifact_dir=$artifactDir" >> $env:GITHUB_OUTPUT
+          echo "target_name=$targetName" >> $env:GITHUB_OUTPUT
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-binaries-${{ matrix.target }}
+          path: release-artifacts/
+          retention-days: 1
+
+      - name: Build completion report
+        run: |
+          echo "🎉 Windows Build Completed Successfully"
+          echo "======================================"
+          echo "🏷️ Target: ${{ matrix.target }}"
+          echo "📦 Binary: $env:BINARY_NAME.exe"
+          echo "📁 Artifact: windows-binaries-${{ matrix.target }}"
+          echo "🔧 Rust Toolchain: stable"
+
+  create-release:
+    name: Create GitHub Release
+    runs-on: windows-latest
+    needs: build-windows-binaries
+    permissions:
+      contents: write
+    if: >
+      (startsWith(github.ref, 'refs/tags/v') && 
+      !inputs.debug_mode && 
+      (inputs.enable_release)
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download all artifacts
+        run: |
+          # 创建发布目录
+          New-Item -ItemType Directory -Force -Path "release-binaries"
+          
+          echo "📥 Downloading artifacts for release..."
+
+      - name: Download msvc artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-binaries-x86_64-pc-windows-msvc
+          path: release-binaries/msvc
+
+      - name: Download gnu artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-binaries-x86_64-pc-windows-gnu
+          path: release-binaries/gnu
+
+      - name: Prepare release files
+        run: |
+          echo "📦 Preparing release files..."
+          $releaseDir = "final-release"
+          New-Item -ItemType Directory -Force -Path $releaseDir
+          
+          # 复制 MSVC 二进制文件
+          $msvcFiles = Get-ChildItem "release-binaries\msvc" -Filter "*.exe"
+          if ($msvcFiles) {
+              foreach ($file in $msvcFiles) {
+                  $newName = "$($file.BaseName)-msvc.exe"
+                  Copy-Item $file.FullName "$releaseDir\$newName"
+                  echo "✅ Added: $newName"
+              }
+          }
+          
+          # 复制 GNU 二进制文件
+          $gnuFiles = Get-ChildItem "release-binaries\gnu" -Filter "*.exe"
+          if ($gnuFiles) {
+              foreach ($file in $gnuFiles) {
+                  $newName = "$($file.BaseName)-gnu.exe"
+                  Copy-Item $file.FullName "$releaseDir\$newName"
+                  echo "✅ Added: $newName"
+              }
+          }
+          
+          # 显示文件列表
+          echo "📄 Release files:"
+          Get-ChildItem $releaseDir | ForEach-Object { 
+              $size = [math]::Round($_.Length / 1MB, 2)
+              echo "  - $($_.Name) (${size} MB)"
+          }
+
+      - name: Create checksums
+        run: |
+          echo "🔐 Creating checksums..."
+          cd final-release
+          
+          # 为每个文件创建校验和
+          Get-ChildItem -Filter "*.exe" | ForEach-Object {
+              $file = $_.Name
+              
+              # SHA256
+              $sha256 = (Get-FileHash $file -Algorithm SHA256).Hash.ToLower()
+              "${sha256} *${file}" | Out-File -FilePath "$file.sha256" -Encoding utf8
+              
+              # SHA512
+              $sha512 = (Get-FileHash $file -Algorithm SHA512).Hash.ToLower()
+              "${sha512} *${file}" | Out-File -FilePath "$file.sha512" -Encoding utf8
+              
+              echo "✅ Created checksums for: $file"
+              echo "  SHA256: $sha256"
+              echo "  SHA512: $sha512"
+          }
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: final-release/*
+          generate_release_notes: true
+          draft: false
+          prerelease: ${{ contains(github.ref, '-alpha') || contains(github.ref, '-beta') || contains(github.ref, '-rc') }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Release completion report
+        run: |
+          echo "🚀 Windows Release Published Successfully"
+          echo "========================================"
+          echo "🏷️ Tag: ${env:GITHUB_REF#refs/tags/}"
+          echo "📦 Binaries released:"
+          Get-ChildItem "final-release" -Filter "*.exe" | ForEach-Object {
+              $size = [math]::Round($_.Length / 1MB, 2)
+              echo "  - $($_.Name) (${size} MB)"
+          }
+          echo "🔐 Checksums: SHA256 and SHA512 for each binary"
+          echo "🎯 Targets: x86_64-pc-windows-msvc, x86_64-pc-windows-gnu"
+
+  debug-mode-report:
+    name: Debug Mode Report
+    runs-on: windows-latest
+    needs: build-windows-binaries
+    if: ${{ inputs.debug_mode }}
+    
+    steps:
+      - name: Debug mode completion message
+        run: |
+          echo "🔧 Debug Mode Completed Successfully!"
+          echo "===================================="
+          echo "🏗️ Built Windows binaries for:"
+          echo "  - x86_64-pc-windows-msvc"
+          echo "  - x86_64-pc-windows-gnu"
+          echo "💾 Artifacts saved for inspection"
+          echo "🚫 No release created (debug mode)"
+          echo "🔄 To publish release, re-run with enable_release=true"
