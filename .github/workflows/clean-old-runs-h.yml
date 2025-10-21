@@ -1,0 +1,120 @@
+name: Cleanup Old Workflow Runs Hourly
+
+on:
+  # schedule:
+  #   - cron: '0 * * * *'  # 每小时运行
+  workflow_dispatch:
+    inputs:
+      hours_old:
+        description: '删除超过多少小时的记录'
+        required: true
+        default: '4'
+        type: string
+      dry_run:
+        description: '仅显示将要删除的记录，不实际删除'
+        required: false
+        default: 'false'
+        type: boolean
+      debug_mode:
+        description: 'Enable debug mode (no push to registry, save artifacts)'
+        required: false
+        default: false
+        type: boolean
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: read
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up flags
+        id: flags
+        run: |
+          # 检测是否是 main 分支
+          if [ "${{ github.ref }}" = "refs/heads/main" ]; then
+            echo "is_main=true" >> $GITHUB_OUTPUT
+          else
+            echo "is_main=false" >> $GITHUB_OUTPUT
+          fi
+          
+          # 设置 debug_mode 标志，确保总是有值
+          DEBUG_MODE="${{ inputs.debug_mode }}"
+          if [ "$DEBUG_MODE" = "true" ]; then
+            echo "debug_mode=true" >> $GITHUB_OUTPUT
+          else
+            echo "debug_mode=false" >> $GITHUB_OUTPUT
+          fi
+          
+          echo "is_main: ${{ steps.flags.outputs.is_main }}"
+          echo "debug_mode: ${{ steps.flags.outputs.debug_mode }}"
+
+      - name: Cleanup workflow runs
+        run: |
+          HOURS_OLD=${HOURS_OLD:-4}
+          DRY_RUN=${DRY_RUN:-false}
+          
+          echo "模式: $([ "$DRY_RUN" = "true" ] && echo "预览模式" || echo "删除模式")"
+          echo "时间阈值: $HOURS_OLD 小时"
+
+          DEBUG_MODE="${{ inputs.debug_mode }}"
+          if [ "$DEBUG_MODE" = "true" ]; then
+            echo "=== 测试获取运行记录 ==="
+            gh run list --repo $GITHUB_REPOSITORY \
+            --json databaseId,createdAt,workflowName,status \
+            --limit 3
+
+            echo "=== 详细时间分析 ==="
+            gh run list --repo $GITHUB_REPOSITORY \
+              --json databaseId,createdAt,workflowName,status \
+              --limit 5 \
+              --jq ".[] | {
+                id: .databaseId, 
+                created: .createdAt,
+                created_epoch: (.createdAt | fromdateiso8601),
+                threshold: (now - ($HOURS_OLD|tonumber)*60*60),
+                should_delete: ((.createdAt | fromdateiso8601) < (now - ($HOURS_OLD|tonumber)*60*60))
+              }"
+
+          fi 
+
+
+
+
+          # 获取需要删除的运行记录
+          run_ids=$(gh run list --repo $GITHUB_REPOSITORY \
+            --json databaseId,createdAt,workflowName,status \
+            --limit 200 \
+            --jq ".[] | select((.createdAt | fromdateiso8601) < (now - ($HOURS_OLD|tonumber)*60*60)) | .databaseId")
+          
+          
+          if [ -z "$run_ids" ]; then
+            echo "没有找到需要删除的运行记录。"
+            exit 0
+          fi
+          
+          echo "找到 $(echo "$run_ids" | wc -l) 条需要处理的运行记录:"
+          echo "$run_ids"
+          
+          if [ "$DRY_RUN" = "true" ]; then
+            echo "预览模式：以上运行记录将被删除（实际未执行删除操作）"
+          else
+            echo "开始删除运行记录..."
+            echo "$run_ids" | while read -r run_id; do
+              if [ -n "$run_id" ]; then
+                echo "删除运行记录: $run_id"
+                # gh run delete "$run_id" --repo $GITHUB_REPOSITORY --yes
+                gh run delete "$run_id" --repo $GITHUB_REPOSITORY
+              fi
+            done
+            echo "清理完成！"
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HOURS_OLD: ${{ inputs.hours_old }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          GITHUB_REPOSITORY: ${{ github.repository }}

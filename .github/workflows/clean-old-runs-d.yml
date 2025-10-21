@@ -1,0 +1,98 @@
+name: Cleanup Old Workflow Runs Daily
+
+on:
+  schedule:
+    - cron: '0 2 * * *'  # 每天凌晨2点运行
+  workflow_dispatch:
+    inputs:
+      days_old:
+        description: '删除超过多少天的记录'
+        required: true
+        default: '30'
+        type: string
+      keep_minimum:
+        description: '至少保留最近多少条记录（即使超过天数）'
+        required: false
+        default: '10'
+        type: string
+      dry_run:
+        description: '仅显示将要删除的记录，不实际删除'
+        required: false
+        default: false
+        type: boolean
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: read
+    
+    steps:
+      - name: Cleanup workflow runs
+        run: |
+          DAYS_OLD=${DAYS_OLD:-30}
+          KEEP_MINIMUM=${KEEP_MINIMUM:-10}
+          DRY_RUN=${DRY_RUN:-false}
+          
+          echo "🗓️ 清理配置:"
+          echo "  模式: $([ "$DRY_RUN" = "true" ] && echo "🔍 预览模式" || echo "🗑️ 删除模式")"
+          echo "  时间阈值: $DAYS_OLD 天"
+          echo "  最少保留: $KEEP_MINIMUM 条记录"
+          echo "  仓库: $GITHUB_REPOSITORY"
+
+          # 获取所有运行记录用于统计
+          all_runs_json=$(gh run list --repo $GITHUB_REPOSITORY \
+            --json databaseId,createdAt,workflowName,status,conclusion \
+            --limit 500)
+
+          total_count=$(echo "$all_runs_json" | jq length)
+          echo "📊 总运行记录数: $total_count"
+
+          # 获取需要删除的运行记录（排除最新的 KEEP_MINIMUM 条）
+          run_ids=$(echo "$all_runs_json" | \
+            jq "sort_by(.createdAt) | reverse | .[$KEEP_MINIMUM:] | .[] | select((.createdAt | fromdateiso8601) < (now - ($DAYS_OLD|tonumber)*24*60*60)) | .databaseId")
+
+          if [ -z "$run_ids" ]; then
+            echo "✅ 没有找到需要删除的运行记录。"
+            echo "💡 可能原因："
+            echo "   - 记录数量少于最少保留数 ($KEEP_MINIMUM)"
+            echo "   - 所有记录都在 $DAYS_OLD 天内"
+            exit 0
+          fi
+          
+          count=$(echo "$run_ids" | wc -l)
+          echo "找到 $count 条需要处理的运行记录:"
+          echo "$run_ids" | head -5
+          if [ $count -gt 5 ]; then
+            echo "... 还有 $((count - 5)) 条记录"
+          fi
+          
+          if [ "$DRY_RUN" = "true" ]; then
+            echo "🔍 预览模式：以上运行记录将被删除（实际未执行删除操作）"
+            echo "📈 清理后剩余记录数: $((total_count - count))"
+          else
+            echo "🚀 开始删除运行记录..."
+            deleted_count=0
+            while IFS= read -r run_id; do
+              if [ -n "$run_id" ]; then
+                echo "🗑️  删除运行记录: $run_id"
+                if gh run delete "$run_id" --repo $GITHUB_REPOSITORY; then
+                  echo "✅ 成功删除: $run_id"
+                  deleted_count=$((deleted_count + 1))
+                else
+                  echo "❌ 删除失败: $run_id"
+                fi
+                sleep 0.5
+              fi
+            done <<< "$run_ids"
+            echo "🎉 清理完成！"
+            echo "📊 统计: 成功删除 $deleted_count/$count 条运行记录"
+            echo "📈 剩余记录数: $((total_count - deleted_count))"
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DAYS_OLD: ${{ inputs.days_old }}
+          KEEP_MINIMUM: ${{ inputs.keep_minimum }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
