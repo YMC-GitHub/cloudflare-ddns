@@ -1,9 +1,9 @@
 name: Build and Push Scratch Docker Image
 
 on:
-  push:
-    tags:
-      - 'v*' # 推送v开头的标签时触发，例如 v1.0.0
+#   push:
+#     tags:
+#       - 'v*' # 推送v开头的标签时触发，例如 v1.0.0
   workflow_dispatch: # 允许手动触发
     inputs:
       debug_mode:
@@ -111,7 +111,7 @@ jobs:
         run: |
           echo "🔧 Debug mode: Saving image to workspace..."
           mkdir -p /tmp/debug-artifacts
-          cp /tmp/image.tar /tmp/debug-artifacts/cloudflare-ddns-debug.tar
+          cp /tmp/image.tar /tmp/debug-artifacts/pass-craft-debug.tar
           echo "Image saved to /tmp/debug-artifacts/"
 
       - name: Upload debug artifacts

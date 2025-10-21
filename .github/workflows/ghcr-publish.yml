@@ -1,9 +1,9 @@
 name: Build, Push and Release
 
 on:
-  push:
-    tags:
-      - 'v*'  # 推送 v 开头的标签时触发
+#   push:
+#     tags:
+#       - 'v*'  # 推送 v 开头的标签时触发
   workflow_dispatch:  # 允许手动触发
     inputs:
       debug_mode:
@@ -133,7 +133,7 @@ jobs:
         run: |
           echo "🔧 Debug mode: Saving image to workspace..."
           mkdir -p /tmp/debug-artifacts
-          cp /tmp/image.tar /tmp/debug-artifacts/cloudflare-ddns-debug.tar
+          cp /tmp/image.tar /tmp/debug-artifacts/pass-craft-debug.tar
           echo "Image saved to /tmp/debug-artifacts/"
 
       - name: Upload debug artifacts (debug mode)
@@ -183,9 +183,9 @@ jobs:
           FIRST_TAG=$(echo "${{ steps.meta.outputs.tags }}" | cut -d',' -f1)
           echo "Using tag for extraction: $FIRST_TAG"
           
-          # 从刚构建的镜像中提取二进制文件 - 使用正确的路径 /app/cloudflare-ddns
+          # 从刚构建的镜像中提取二进制文件 - 使用正确的路径 /app/pass-craft
           docker create --name extract-binary-container $FIRST_TAG
-          docker cp extract-binary-container:/app/cloudflare-ddns release-binaries/${{ env.BINARY_NAME }}
+          docker cp extract-binary-container:/app/pass-craft release-binaries/${{ env.BINARY_NAME }}
           docker rm -f extract-binary-container
           
           # 使二进制文件可执行

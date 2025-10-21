@@ -25,7 +25,7 @@ on:
 
 env:
   REGISTRY: docker.io
-  IMAGE_NAME: cloudflare-ddns
+  IMAGE_NAME: pass-craft
 
 jobs:
   debug-build:

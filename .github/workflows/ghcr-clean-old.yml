@@ -1,18 +1,142 @@
-name: Cleanup Old Images
+name: Cleanup Old Container Images
+
 on:
   schedule:
     - cron: '0 2 * * 0'  # 每周日凌晨2点
+  workflow_dispatch:
+    inputs:
+      days_old:
+        description: '删除超过多少天的镜像'
+        required: true
+        default: '30'
+        type: string
+      keep_minimum:
+        description: '至少保留最近多少个镜像'
+        required: false
+        default: '10'
+        type: string
+      package_name:
+        description: '要清理的包名称'
+        required: true
+        default: 'pass-craft'
+        type: string
+      dry_run:
+        description: '仅显示将要删除的镜像，不实际删除'
+        required: false
+        default: false
+        type: boolean
+
 jobs:
   cleanup:
     runs-on: ubuntu-latest
-    steps:
-    #   - name: Delete images older than 30 days
-    #     run: |
-    #       gh api repos/${{ github.repository }}/packages/container/cloudflare-ddns/versions \
-    #         --jq '.[] | select(.updated_at < "$(date -d "30 days ago" -Iseconds)") | .id' | \
-    #         xargs -I {} gh api repos/${{ github.repository }}/packages/container/cloudflare-ddns/versions/{} --method DELETE
-
-      - name: Keep the latest 10 images
-        run: |
-          gh api repos/owner/repo/packages/container/package-name --method DELETE
+    permissions:
+      packages: write
+      contents: read
     
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup GitHub CLI
+        run: |
+          # 确保 GitHub CLI 已安装
+          command -v gh >/dev/null 2>&1 || {
+            echo "GitHub CLI 已安装"
+          }
+
+      - name: Cleanup container images
+        run: |
+          DAYS_OLD=${DAYS_OLD:-30}
+          KEEP_MINIMUM=${KEEP_MINIMUM:-10}
+          PACKAGE_NAME=${PACKAGE_NAME:-pass-craft}
+          DRY_RUN=${DRY_RUN:-false}
+          
+          echo "🗑️ 容器镜像清理配置:"
+          echo "  模式: $([ "$DRY_RUN" = "true" ] && echo "🔍 预览模式" || echo "🗑️ 删除模式")"
+          echo "  时间阈值: $DAYS_OLD 天"
+          echo "  最少保留: $KEEP_MINIMUM 个镜像"
+          echo "  包名称: $PACKAGE_NAME"
+          echo "  仓库: $GITHUB_REPOSITORY"
+
+          # 获取所有容器镜像版本
+          echo "📦 获取容器镜像列表..."
+          package_versions=$(gh api repos/$GITHUB_REPOSITORY/packages/container/$PACKAGE_NAME/versions \
+            --jq 'sort_by(.updated_at) | reverse')
+          
+          total_count=$(echo "$package_versions" | jq length)
+          echo "📊 总镜像数量: $total_count"
+
+          if [ $total_count -eq 0 ]; then
+            echo "✅ 没有找到容器镜像。"
+            exit 0
+          fi
+
+          # 计算截止时间（当前时间减去天数）
+          cutoff_date=$(date -d "$DAYS_OLD days ago" -Iseconds | sed 's/+/%2B/')
+          echo "⏰ 截止时间: $(date -d "$DAYS_OLD days ago" '+%Y-%m-%d %H:%M:%S')"
+
+          # 获取需要删除的镜像ID（排除最新的 KEEP_MINIMUM 个，且超过天数）
+          delete_ids=$(echo "$package_versions" | \
+            jq -r ".[$KEEP_MINIMUM:] | .[] | select(.updated_at < \"$cutoff_date\") | .id")
+
+          if [ -z "$delete_ids" ]; then
+            echo "✅ 没有找到需要删除的镜像。"
+            echo "💡 可能原因："
+            echo "   - 镜像数量少于最少保留数 ($KEEP_MINIMUM)"
+            echo "   - 所有镜像都在 $DAYS_OLD 天内更新"
+            exit 0
+          fi
+
+          count=$(echo "$delete_ids" | wc -l)
+          echo "找到 $count 个需要处理的镜像:"
+          echo "$delete_ids" | head -5
+          if [ $count -gt 5 ]; then
+            echo "... 还有 $((count - 5)) 个镜像"
+          fi
+
+          # 显示详细信息
+          echo "📋 将要删除的镜像详情:"
+          echo "$package_versions" | jq -r ".[] | select(.id | IN($(echo "$delete_ids" | paste -sd, -))) | \"  - ID: \(.id), 更新: \(.updated_at), 标签: \(.metadata.container.tags | join(\", \"))\""
+
+          if [ "$DRY_RUN" = "true" ]; then
+            echo "🔍 预览模式：以上镜像将被删除（实际未执行删除操作）"
+            echo "📈 清理后剩余镜像数: $((total_count - count))"
+          else
+            echo "🚀 开始删除镜像..."
+            deleted_count=0
+            failed_count=0
+            
+            while IFS= read -r version_id; do
+              if [ -n "$version_id" ]; then
+                echo "🗑️  删除镜像版本: $version_id"
+                if gh api \
+                  repos/$GITHUB_REPOSITORY/packages/container/$PACKAGE_NAME/versions/$version_id \
+                  --method DELETE --silent; then
+                  echo "✅ 成功删除: $version_id"
+                  deleted_count=$((deleted_count + 1))
+                else
+                  echo "❌ 删除失败: $version_id"
+                  failed_count=$((failed_count + 1))
+                fi
+                # 添加延迟避免 API 限制
+                sleep 1
+              fi
+            done <<< "$delete_ids"
+            
+            echo "🎉 清理完成！"
+            echo "📊 统计: 成功 $deleted_count, 失败 $failed_count, 总计 $count"
+            echo "📈 剩余镜像数: $((total_count - deleted_count))"
+            
+            if [ $failed_count -gt 0 ]; then
+              echo "⚠️  有 $failed_count 个镜像删除失败，请检查权限和网络连接"
+              exit 1
+            fi
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DAYS_OLD: ${{ inputs.days_old }}
+          KEEP_MINIMUM: ${{ inputs.keep_minimum }}
+          # PACKAGE_NAME: ${{ inputs.package_name }}
+          PACKAGE_NAME: ${{ github.event.repository.name }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          GITHUB_REPOSITORY: ${{ github.repository }}

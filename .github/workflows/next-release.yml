@@ -1,9 +1,9 @@
 name: Multi-Platform Build and Release
 
 on:
-#   push:
-#     tags:
-#       - 'v*'  # 推送 v 开头的标签时触发
+  push:
+    tags:
+      - 'v*'  # 推送 v 开头的标签时触发
   workflow_dispatch:  # 允许手动触发
     inputs:
       debug_mode:
@@ -128,85 +128,45 @@ jobs:
           cache-to: type=gha,mode=max
           outputs: ${{ inputs.debug_mode && 'type=docker,dest=/tmp/image.tar' || '' }}
 
-      - name: Save image locally (debug mode)
-        if: ${{ inputs.debug_mode }}
+      - name: Save and upload debug artifacts
+        if: ${{ github.event.inputs.debug_mode }}
         run: |
-          echo "🔧 Debug mode: Saving image to workspace..."
           mkdir -p /tmp/debug-artifacts
-          cp /tmp/image.tar /tmp/debug-artifacts/cloudflare-ddns-debug.tar
-          echo "Image saved to /tmp/debug-artifacts/"
+          cp /tmp/image.tar /tmp/debug-artifacts/docker-image-debug.tar
+          echo "✅ Debug artifacts prepared"
 
-      - name: Upload debug artifacts (debug mode)
-        if: ${{ inputs.debug_mode }}
+      - name: Upload debug artifacts
+        if: ${{ github.event.inputs.debug_mode }}
         uses: actions/upload-artifact@v4
         with:
           name: docker-image-debug
           path: /tmp/debug-artifacts/
           retention-days: 1
 
-      - name: Image inspection (debug mode)
-        if: ${{ inputs.debug_mode }}
-        run: |
-          echo "🔍 Inspecting built image..."
-          docker load -i /tmp/image.tar
-          docker images
-          echo "=== Image details ==="
-          IMAGE_TAG="${{ env.REGISTRY }}/${{ steps.repo.outputs.repo_lower }}:debug-${{ github.sha }}"
-          if docker image inspect "$IMAGE_TAG" >/dev/null 2>&1; then
-            docker image inspect "$IMAGE_TAG" | jq '.[0] | {Size: .Size, Architecture: .Architecture, Os: .Os}'
-          else
-            echo "⚠️ Debug image not found for inspection, listing all images:"
-            docker images
-          fi
-
-      - name: Test image (debug mode)
-        if: ${{ inputs.debug_mode }}
-        run: |
-          echo "🧪 Testing built image..."
-          IMAGE_TAG="${{ env.REGISTRY }}/${{ steps.repo.outputs.repo_lower }}:debug-${{ github.sha }}"
-          if docker image inspect "$IMAGE_TAG" >/dev/null 2>&1; then
-            docker run --rm "$IMAGE_TAG" --version || \
-            docker run --rm "$IMAGE_TAG" --help || \
-            echo "Image runs successfully"
-            echo "✅ Image test completed"
-          else
-            echo "❌ Debug image not found for testing"
-          fi
-
       - name: Extract binary from Docker image
         id: extract-binary
         run: |
-          # 创建临时目录
           mkdir -p release-binaries
           
-          # 使用第一个标签来提取二进制文件
           FIRST_TAG=$(echo "${{ steps.meta.outputs.tags }}" | cut -d',' -f1)
           echo "Using tag for extraction: $FIRST_TAG"
           
-          # 从刚构建的镜像中提取二进制文件
           docker create --name extract-binary-container $FIRST_TAG
           docker cp extract-binary-container:/app/${{ env.BINARY_NAME }} release-binaries/${{ env.BINARY_NAME }}-linux-amd64
           docker rm -f extract-binary-container
           
-          # 使二进制文件可执行
           chmod +x release-binaries/${{ env.BINARY_NAME }}-linux-amd64
           
-          # 获取二进制文件信息
-          echo "binary_size=$(du -h release-binaries/${{ env.BINARY_NAME }}-linux-amd64 | cut -f1)" >> $GITHUB_OUTPUT
+          FILE_SIZE=$(du -h release-binaries/${{ env.BINARY_NAME }}-linux-amd64 | cut -f1)
+          echo "binary_size=$FILE_SIZE" >> $GITHUB_OUTPUT
           echo "binary_path=release-binaries/${{ env.BINARY_NAME }}-linux-amd64" >> $GITHUB_OUTPUT
           
-          # 显示文件信息
-          echo "📄 File information:"
-          file release-binaries/${{ env.BINARY_NAME }}-linux-amd64
-          echo "📊 File details:"
-          ls -la release-binaries/${{ env.BINARY_NAME }}-linux-amd64
+          echo "📄 Binary: ${{ env.BINARY_NAME }}-linux-amd64 ($FILE_SIZE)"
 
       - name: Test extracted binary
         run: |
-          echo "🧪 Testing extracted Linux binary..."
-          ./release-binaries/${{ env.BINARY_NAME }}-linux-amd64 --version || \
-          ./release-binaries/${{ env.BINARY_NAME }}-linux-amd64 --help || \
-          echo "Linux binary executed successfully"
+          echo "🧪 Testing Linux binary..."
+          ./release-binaries/${{ env.BINARY_NAME }}-linux-amd64 --version
 
       - name: Upload Linux binary artifact
         uses: actions/upload-artifact@v4
@@ -215,68 +175,24 @@ jobs:
           path: release-binaries/${{ env.BINARY_NAME }}-linux-amd64
           retention-days: 1
 
-      - name: Build completion report (production mode)
-        if: ${{ !inputs.debug_mode }}
+      - name: Build completion report
         run: |
           echo "🎉 Linux Build Completed Successfully"
-          echo "===================================="
-          echo "📦 Image: ${{ env.REGISTRY }}/${{ steps.repo.outputs.repo_lower }}"
+          echo "📦 Image: ${{ env.REGISTRY }}/${{ github.repository }}"
           echo "🏷️ Tags: ${{ steps.meta.outputs.tags }}"
-          echo "🏗️ Architecture: x86_64 (amd64)"
-          echo "📐 Platform: linux/amd64"
-          echo "🔧 Build Type: Static musl binary on scratch"
-          echo "📦 Binary: ${{ steps.extract-binary.outputs.binary_path }} (${{ steps.extract-binary.outputs.binary_size }})"
-          echo "🌐 China Mirror: ${{ inputs.use_china_mirror }}"
-          echo "📡 Alpine Mirror: ${{ inputs.alpine_mirror }}"
-          echo "⚙️ Rust Mirror: ${{ inputs.rust_mirror }}"
-
-      - name: Debug mode completion message
-        if: ${{ inputs.debug_mode }}
-        run: |
-          echo "🔧 Linux Debug Mode Completed Successfully!"
-          echo "=========================================="
-          echo "📦 Image built but NOT pushed to registry"
-          echo "🏷️ Debug tag: debug-${{ github.sha }}"
-          echo "💾 Artifacts saved for inspection"
-          echo "🔍 Image inspected and tested locally"
+          echo "🌐 Network: ${{ steps.network-check.outputs.network_config }}"
+          echo "🚀 Pushed to registry: ${{ !github.event.inputs.debug_mode }}"
 
   build-windows:
     name: Build Windows Binaries
     runs-on: windows-latest
     strategy:
       matrix:
-        target: [x86_64-pc-windows-msvc, x86_64-pc-windows-gnu]
+        target: [x86_64-pc-windows-msvc]
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
-      - name: Configure China mirrors (optional)
-        if: ${{ inputs.use_china_mirror }}
-        run: |
-          echo "🔧 Configuring Rust China mirrors..."
-          $RUST_MIRROR = "${{ inputs.rust_mirror }}"
-          
-          # 配置 cargo 镜像
-          if ($RUST_MIRROR -eq "tuna") {
-            $CARGO_REGISTRY = "https://mirrors.tuna.tsinghua.edu.cn/git/crates.io-index.git"
-          } elseif ($RUST_MIRROR -eq "ustc") {
-            $CARGO_REGISTRY = "https://mirrors.ustc.edu.cn/crates.io-index/"
-          }
-          
-          # 创建 cargo 配置目录
-          New-Item -ItemType Directory -Force -Path "$env:USERPROFILE\.cargo"
-          
-          # 配置 cargo 镜像
-          @"
-[source.crates-io]
-replace-with = 'mirror'
-
-[source.mirror]
-registry = '$CARGO_REGISTRY'
-"@ | Out-File -FilePath "$env:USERPROFILE\.cargo\config" -Encoding utf8
-          
-          echo "✅ Configured Rust mirror: $RUST_MIRROR"
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -294,79 +210,28 @@ registry = '$CARGO_REGISTRY'
           restore-keys: |
             ${{ runner.os }}-cargo-${{ matrix.target }}
 
-      - name: Build debug information
-        run: |
-          echo "🔧 Windows Build Configuration:"
-          echo "Target: ${{ matrix.target }}"
-          echo "Rust Version: $(rustc --version)"
-          echo "Cargo Version: $(cargo --version)"
-          echo "China Mirror: ${{ inputs.use_china_mirror }}"
-          echo "Rust Mirror: ${{ inputs.rust_mirror }}"
-
       - name: Build release binary
         run: |
           echo "🏗️ Building for target: ${{ matrix.target }}"
           cargo build --release --target ${{ matrix.target }}
-          
-          echo "📁 Build output:"
-          Get-ChildItem "target\${{ matrix.target }}\release\" -Filter "*.exe" | ForEach-Object {
-              echo "  - $($_.Name) ($([math]::Round($_.Length/1MB, 2)) MB)"
-          }
 
       - name: Test binary
         run: |
           $binaryPath = "target\${{ matrix.target }}\release\$env:BINARY_NAME.exe"
-          if (Test-Path $binaryPath) {
-              echo "🧪 Testing binary: $binaryPath"
-              # 尝试运行版本检查或帮助命令
-              & $binaryPath --version 2>$null || & $binaryPath --help 2>$null || echo "✅ Binary executed successfully"
-          } else {
-              echo "❌ Binary not found at: $binaryPath"
-              # 列出所有可执行文件
-              echo "Available executables:"
-              Get-ChildItem "target\${{ matrix.target }}\release\" -Filter "*.exe" | ForEach-Object { echo "  - $($_.FullName)" }
-          }
+          & $binaryPath --version
 
-      - name: Prepare artifacts
-        id: prepare-windows-artifacts
+      - name: Prepare and upload artifacts
         run: |
           $binaryPath = "target\${{ matrix.target }}\release\$env:BINARY_NAME.exe"
           $artifactDir = "release-artifacts"
-          $targetName = "${{ matrix.target }}"
           
-          # 创建输出目录
           New-Item -ItemType Directory -Force -Path $artifactDir
+          $outputName = "$env:BINARY_NAME-${{ matrix.target }}.exe"
+          Copy-Item $binaryPath "$artifactDir\$outputName"
           
-          if (Test-Path $binaryPath) {
-              # 复制二进制文件
-              $outputName = "$env:BINARY_NAME-$targetName.exe"
-              Copy-Item $binaryPath "$artifactDir\$outputName"
-              
-              # 获取文件信息
-              $fileInfo = Get-Item "$artifactDir\$outputName"
-              $fileSize = [math]::Round($fileInfo.Length / 1MB, 2)
-              
-              echo "binary_path_$($targetName -replace '-','_')=$artifactDir\$outputName" >> $env:GITHUB_OUTPUT
-              echo "binary_size_$($targetName -replace '-','_')=${fileSize}MB" >> $env:GITHUB_OUTPUT
-              
-              echo "✅ Prepared artifact: $outputName (${fileSize} MB)"
-          } else {
-              echo "❌ Binary not found: $binaryPath"
-              # 尝试找到任何可执行文件
-              $exeFiles = Get-ChildItem "target\${{ matrix.target }}\release\" -Filter "*.exe"
-              if ($exeFiles) {
-                  echo "Found alternative executables:"
-                  $exeFiles | ForEach-Object { 
-                      echo "  - $($_.Name)"
-                      $outputName = "$($_.BaseName)-$targetName.exe"
-                      Copy-Item $_.FullName "$artifactDir\$outputName"
-                  }
-              }
-          }
-          
-          # 输出通用信息
-          echo "artifact_dir=$artifactDir" >> $env:GITHUB_OUTPUT
-          echo "target_name=$targetName" >> $env:GITHUB_OUTPUT
+          $fileInfo = Get-Item "$artifactDir\$outputName"
+          $fileSize = [math]::Round($fileInfo.Length / 1MB, 2)
+          echo "✅ Prepared artifact: $outputName (${fileSize} MB)"
 
       - name: Upload Windows artifacts
         uses: actions/upload-artifact@v4
@@ -378,51 +243,99 @@ registry = '$CARGO_REGISTRY'
       - name: Build completion report
         run: |
           echo "🎉 Windows Build Completed Successfully"
-          echo "======================================"
           echo "🏷️ Target: ${{ matrix.target }}"
-          echo "📦 Binary: $env:BINARY_NAME.exe"
-          echo "📁 Artifact: windows-${{ matrix.target }}"
-          echo "🔧 Rust Toolchain: stable"
-          echo "🌐 China Mirror: ${{ inputs.use_china_mirror }}"
-          echo "⚙️ Rust Mirror: ${{ inputs.rust_mirror }}"
+
+  build-macos:
+    name: Build macOS Binaries
+    runs-on: macos-latest
+    strategy:
+      matrix:
+        target: [x86_64-apple-darwin, aarch64-apple-darwin]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache cargo registry
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}-${{ matrix.target }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-${{ matrix.target }}
+
+      - name: Build release binary
+        run: |
+          echo "🏗️ Building for target: ${{ matrix.target }}"
+          cargo build --release --target ${{ matrix.target }}
+
+      - name: Test binary
+        run: |
+          binary_path="target/${{ matrix.target }}/release/$BINARY_NAME"
+          ./$binary_path --version
+
+      - name: Prepare and upload artifacts
+        run: |
+          binary_path="target/${{ matrix.target }}/release/$BINARY_NAME"
+          artifact_dir="release-artifacts"
+          
+          mkdir -p $artifact_dir
+          output_name="$BINARY_NAME-${{ matrix.target }}"
+          cp $binary_path "$artifact_dir/$output_name"
+          
+          file_size=$(du -h "$artifact_dir/$output_name" | cut -f1)
+          echo "✅ Prepared artifact: $output_name (${file_size})"
+
+      - name: Upload macOS artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-${{ matrix.target }}
+          path: release-artifacts/
+          retention-days: 1
+
+      - name: Build completion report
+        run: |
+          echo "🎉 macOS Build Completed Successfully"
+          echo "🏷️ Target: ${{ matrix.target }}"
+          echo "🍎 Architecture: ${{ contains(matrix.target, 'aarch64') && 'Apple Silicon' || 'Intel' }}"
 
   create-release:
     name: Create Unified GitHub Release
     runs-on: ubuntu-latest
-    needs: [build-linux, build-windows]
+    needs: [build-linux, build-windows, build-macos]
     permissions:
       contents: write
-    if: startsWith(github.ref, 'refs/tags/v') && !inputs.debug_mode
+    if: startsWith(github.ref, 'refs/tags/v') && !github.event.inputs.debug_mode
     
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
-      - name: Set up lowercase repository name
-        id: repo
-        run: |
-          REPO_LOWER=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
-          echo "repo_lower=$REPO_LOWER" >> $GITHUB_OUTPUT
-
-      - name: Download Linux binary artifact
+      - name: Download Linux binary
         uses: actions/download-artifact@v4
         with:
           name: linux-binary
           path: release-assets/linux
 
-      - name: Download Windows MSVC artifact
+      - name: Download Windows artifacts
         uses: actions/download-artifact@v4
         with:
-          name: windows-x86_64-pc-windows-msvc
-          path: release-assets/windows-msvc
+          pattern: windows-*
+          path: release-assets/windows
 
-      - name: Download Windows GNU artifact
+      - name: Download macOS artifacts
         uses: actions/download-artifact@v4
         with:
-          name: windows-x86_64-pc-windows-gnu
-          path: release-assets/windows-gnu
+          pattern: macos-*
+          path: release-assets/macos
 
       - name: Prepare release files
         run: |
@@ -433,26 +346,23 @@ registry = '$CARGO_REGISTRY'
           chmod +x final-release/${{ env.BINARY_NAME }}-linux-amd64
           
           # Windows 二进制文件
-          cp release-assets/windows-msvc/*.exe final-release/
-          cp release-assets/windows-gnu/*.exe final-release/
+          cp release-assets/windows/*/*.exe final-release/
           
-          echo "📦 Release files prepared:"
+          # macOS 二进制文件
+          cp release-assets/macos/*/* final-release/
+          chmod +x final-release/*-apple-darwin
+          
+          echo "📦 Release files:"
           ls -la final-release/
-          echo ""
-          echo "📊 File sizes:"
-          ls -lh final-release/
 
       - name: Create checksums
         run: |
           cd final-release
-          echo "🔐 Creating checksums for all binaries..."
           for file in *; do
             if [ -f "$file" ] && [[ "$file" != *.sha256 ]] && [[ "$file" != *.sha512 ]]; then
               sha256sum "$file" > "$file.sha256"
               sha512sum "$file" > "$file.sha512"
-              echo "✅ Created checksums for: $file"
-              echo "   SHA256: $(cat "$file.sha256")"
-              echo "   SHA512: $(cat "$file.sha512")"
+              echo "✅ $file"
             fi
           done
 
@@ -462,7 +372,6 @@ registry = '$CARGO_REGISTRY'
           files: final-release/*
           generate_release_notes: true
           draft: false
-          prerelease: ${{ contains(github.ref, '-alpha') || contains(github.ref, '-beta') || contains(github.ref, '-rc') }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -470,25 +379,20 @@ registry = '$CARGO_REGISTRY'
         run: |
           echo "🚀 Multi-Platform Release Published Successfully"
           echo "=============================================="
-          echo "🏷️ Tag: ${GITHUB_REF#refs/tags/}"
-          echo "📦 Release includes:"
-          echo "  Linux:"
+          echo "📦 Included binaries:"
+          echo "  🐧 Linux:"
           echo "    - ${{ env.BINARY_NAME }}-linux-amd64 (Static musl binary)"
-          echo "  Windows:"
+          echo "  🪟 Windows:"
           echo "    - ${{ env.BINARY_NAME }}-x86_64-pc-windows-msvc.exe (MSVC toolchain)"
-          echo "    - ${{ env.BINARY_NAME }}-x86_64-pc-windows-gnu.exe (GNU toolchain)"
-          echo "🔐 Checksums: SHA256 and SHA512 for each binary"
-          echo "🐳 Docker Image: ${{ env.REGISTRY }}/${{ steps.repo.outputs.repo_lower }}"
-          echo "🌐 Build Options:"
-          echo "  - China Mirror: ${{ inputs.use_china_mirror }}"
-          echo "  - Alpine Mirror: ${{ inputs.alpine_mirror }}"
-          echo "  - Rust Mirror: ${{ inputs.rust_mirror }}"
+          echo "  🍎 macOS:"
+          echo "    - ${{ env.BINARY_NAME }}-x86_64-apple-darwin (Intel)"
+          echo "    - ${{ env.BINARY_NAME }}-aarch64-apple-darwin (Apple Silicon)"
 
   debug-mode-report:
     name: Debug Mode Final Report
     runs-on: ubuntu-latest
-    needs: [build-linux, build-windows]
-    if: ${{ inputs.debug_mode }}
+    needs: [build-linux, build-windows, build-macos]
+    if: ${{ github.event.inputs.debug_mode }}
     
     steps:
       - name: Debug mode completion message
@@ -496,14 +400,11 @@ registry = '$CARGO_REGISTRY'
           echo "🔧 Debug Mode Completed Successfully!"
           echo "===================================="
           echo "🏗️ Built artifacts for all platforms:"
-          echo "  - Linux: Static musl binary and Docker image"
-          echo "  - Windows: x86_64-pc-windows-msvc"
-          echo "  - Windows: x86_64-pc-windows-gnu"
+          echo "  🐧 Linux: Static musl binary and Docker image"
+          echo "  🪟 Windows: x86_64-pc-windows-msvc"
+          echo "  🍎 macOS: x86_64-apple-darwin (Intel)"
+          echo "  🍎 macOS: aarch64-apple-darwin (Apple Silicon)"
           echo "💾 All artifacts saved for inspection"
           echo "🚫 No images pushed to registry"
           echo "🚫 No release created"
           echo "🔄 To publish, re-run without debug mode"
-          echo "🌐 Build Options Used:"
-          echo "  - China Mirror: ${{ inputs.use_china_mirror }}"
-          echo "  - Alpine Mirror: ${{ inputs.alpine_mirror }}"
-          echo "  - Rust Mirror: ${{ inputs.rust_mirror }}"
